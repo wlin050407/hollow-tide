@@ -1,0 +1,5 @@
+lupa>=2.0
+Pillow>=10.0
+numpy>=1.24
+quicktex>=0.3
+texture2ddecoder>=1.0

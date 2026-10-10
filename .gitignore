@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 系统 / 编辑器
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 美术：AI 批量生成的原始图先放 art/_inbox（不进仓库），挑选后再移到 art/source/<资产名>/
+art/_inbox/
+# prepare_icon.py 生成的审查预览，可随时重新生成
+art/review/
+
+# 打包产物
+dist/
