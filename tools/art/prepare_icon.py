@@ -122,6 +122,10 @@ def make_preview(icon: Image.Image, path: Path) -> None:
 
 
 def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 管道输出（如 AI 助手调用）默认不是 UTF-8
+    except AttributeError:  # pragma: no cover
+        pass
     ap = argparse.ArgumentParser(description="把 AI 生成图整理成 DST 物品栏图标（64x64 透明 PNG）")
     ap.add_argument("input", type=Path, help="源图（建议 PNG；最好已经去掉背景）")
     ap.add_argument("--name", required=True, help="输出名，必须等于 prefab 名，例如 tide_crystal")

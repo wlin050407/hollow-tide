@@ -82,6 +82,10 @@ def spill_report(img: Image.Image, key: tuple[int, int, int]) -> int:
 
 
 def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 管道输出（如 AI 助手调用）默认不是 UTF-8
+    except AttributeError:  # pragma: no cover
+        pass
     ap = argparse.ArgumentParser(description="去掉纯色背景，输出透明 PNG（边缘去色溢出）")
     ap.add_argument("input", type=Path)
     ap.add_argument("--out", type=Path, help="输出路径（默认：同目录 <名字>_nobg.png）")

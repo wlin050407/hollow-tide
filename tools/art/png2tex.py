@@ -132,6 +132,10 @@ def verify(tex_path: Path, source: Image.Image) -> None:
 
 
 def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 管道输出（如 AI 助手调用）默认不是 UTF-8
+    except AttributeError:  # pragma: no cover
+        pass
     ap = argparse.ArgumentParser(description="PNG -> DST KTEX(.tex) + atlas(.xml)")
     ap.add_argument("input", type=Path, help="源 PNG（物品栏图标建议先用 prepare_icon.py 处理成 64x64）")
     ap.add_argument("--name", help="输出名（默认取输入文件名），图集里的元素名为 <name>.tex")

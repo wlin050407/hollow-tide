@@ -876,6 +876,10 @@ def cmd_selftest(args) -> int:
 
 
 def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 管道输出（如 AI 助手调用）默认不是 UTF-8
+    except AttributeError:  # pragma: no cover
+        pass
     ap = argparse.ArgumentParser(description="DST 动画包生成 / 预览 / 格式自检")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

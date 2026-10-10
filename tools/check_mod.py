@@ -856,6 +856,10 @@ def check_api(harness, mod: Path, game: GameIndex | None, found: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 管道输出（如 AI 助手调用）默认不是 UTF-8
+    except AttributeError:  # pragma: no cover
+        pass
     parser = argparse.ArgumentParser(description="Hollow Tide 静态检查")
     repo = Path(__file__).resolve().parent.parent
     parser.add_argument("--mod", type=Path, default=repo / "mod", help="Mod 目录（默认：仓库里的 mod/）")

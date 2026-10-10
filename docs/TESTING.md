@@ -35,6 +35,16 @@ setx DST_SCRIPTS "D:\Applications\Steam\steamapps\common\Don't Starve Together\d
 必须 **0 个 ERROR** 才进游戏。它能抓到：语法错误、BOM、modinfo 写错、缺中英文名字、资源文件缺失、
 以及**原版脚本里不存在的函数 / TUNING 键 / 组件方法**（AI 编造 API 的典型症状）。它不能代替进游戏测试。
 
+check_mod 只执行 prefab 构造函数，**回调里的代码它跑不到**。深潮祭坛的状态机和每帧亮度渐变另有行为模拟（CI 也跑）：
+
+```bat
+python tools\sim_altar.py
+```
+
+它在一个最小的假游戏环境里真正运行 `tide_altar.lua`：唤潮 → 冷却 → 恢复（主机）、客户端中途走近、专用服务器、读档进入冷却，
+检查渐亮渐暗的时长和单调、呼吸范围、叠加层和漩涡的创建删除、每帧更新会停止。期望值从 `tuning.lua` 读。
+必须**全部通过**。它同样不能代替进游戏（画面、绘制顺序、联机同步都要进游戏看）。
+
 ## 2. M0：Mod 能被游戏加载
 
 1. 启动 DST → 主菜单 **模组** → **服务器模组** 列表里应出现 **Hollow Tide 深潮异变 [dev]**。

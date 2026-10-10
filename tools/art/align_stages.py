@@ -105,6 +105,10 @@ def onion(ref: Image.Image, aligned: list[Image.Image], path: Path) -> None:
 
 
 def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 管道输出（如 AI 助手调用）默认不是 UTF-8
+    except AttributeError:  # pragma: no cover
+        pass
     ap = argparse.ArgumentParser(description="把破损阶段图的底座对齐到完整图")
     ap.add_argument("ref", type=Path, help="完整图（基准）")
     ap.add_argument("stages", type=Path, nargs="+", help="要对齐的阶段图")

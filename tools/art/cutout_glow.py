@@ -55,6 +55,10 @@ def cutout(body_ref: Image.Image, glow_img: Image.Image, floor: int = 14, grow: 
 
 
 def main() -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows 管道输出（如 AI 助手调用）默认不是 UTF-8
+    except AttributeError:  # pragma: no cover
+        pass
     ap = argparse.ArgumentParser(description="黑背景发光图 -> 透明 PNG（物体轮廓取自参考图）")
     ap.add_argument("reference", type=Path, help="透明背景、构图相同的参考图（如平时状态）")
     ap.add_argument("glow", type=Path, help="黑背景的发光图")

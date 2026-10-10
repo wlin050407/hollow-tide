@@ -15,3 +15,5 @@ jobs:
       - run: pip install -r tools/requirements.txt
       # CI 里没有游戏脚本，第 6 步（API 核对）会自动跳过；本地运行时请带上 --game-scripts
       - run: python tools/check_mod.py
+      # 祭坛状态机 + 亮度渐变的行为模拟（check_mod 跑不到回调）
+      - run: python tools/sim_altar.py
