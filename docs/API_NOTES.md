@@ -136,6 +136,10 @@
 | `inspectable.getstatus = fn(inst, viewer)` 返回状态键；`STRINGS.CHARACTERS.GENERIC.DESCRIBE.X` 写成表 `{GENERIC=..., 状态=...}`，返回 nil 时用 GENERIC | `components/inspectable.lua`；`stringutil.lua`；原版 `moondial.lua` |
 | 灯光：`Light:Enable` 只在服务器设（会同步）；要在两端各自渐变时加 `Light:EnableClientModulation(true)`，并在两端都加 `lighttweener` 组件 | `prefabs/moondial.lua`；`prefabs/deerclopseyeball_sentryward.lua`；`cavelight.lua` 等 52 个 prefab |
 | `inst:AddOrRemoveTag(tag, condition)`；标签会同步到客户端 | `entityscript.lua`；`components/activatable.lua` |
+| 本地（不联网）特效：`CreateEntity()` 后不加 `AddNetwork`，`persists = false`，客户端上 `entity:SetCanSleep(false)`，用 `entity:SetParent(inst.entity)` 挂在实体下；只在 `not TheNet:IsDedicated()` 时创建 | `prefabs/deerclopseyeball_sentryward.lua` `CLIENT_CreateEyeball` |
+| 画在地面层、被人和建筑盖住的贴地图案：`AnimState:SetLayer(LAYER_BACKGROUND)` + `SetSortOrder(3)`（普通朝向，图本身画成透视椭圆） | `prefabs/damp_trail.lua`；原版海上漩涡 `oceanwhirlportal.lua` 也是背景层 |
+| 原版海上漩涡 `whirlportal.zip` 的旋转是 59 帧手绘逐帧（`Swirls` symbol 59 帧），不是矩阵旋转；矩阵旋转的先例是预警圈 `warning_shadow.zip` | 解析两个原版动画包 |
+| 动画播完推送 `animover`；`fx:ListenForEvent("animover", fx.Remove)` 是原版常用的"播完就删"写法；实体被删除时会调用 `inst.OnRemoveEntity` | `prefabs/abigail.lua` 等；`prefabs/deerclopseyeball_sentryward.lua` |
 | FX `splash`（`fx.lua`，自带 `turnoftides/common/together/water/splash/bird` 声音、`FinalOffset1`）；`splash_ocean` 注释为"旧海洋用"；声音 `dontstarve/common/together/moondial/craft`、`.../water_movement` | `fx.lua`；`stategraphs/SGmoondial.lua` |
 | 可作占位的原版资源：月晷 `moondial`（bank `moondial` / build `moondial_build` / anim `idle_new`；灯光在共享部分配置、在服务器上开关）；FX `warningshadow`（循环播放、`persists=false`，需手动 Remove）、`splash_ocean`、`crab_king_waterspout` | `prefabs/moondial.lua`、`prefabs/warningshadow.lua` 等 |
 

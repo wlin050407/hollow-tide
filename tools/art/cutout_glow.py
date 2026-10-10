@@ -6,6 +6,8 @@
 这里分两部分处理：
   * 物体本身：直接用参考图（透明背景）的不透明区域，墨线完整保留
   * 物体外面的光晕、水珠：看成"亮光叠在黑底上"，按亮度反推透明度（越暗越透明），颜色除以透明度还原
+  * --max-dist N：只保留离物体 N 像素以内的光（再往外渐隐），用来去掉悬浮在空中的水珠之类
+    （静止的图里，悬空的水珠一动不动，看着很假）
 两张图必须完全对齐（AI 在原图上编辑的结果通常是对齐的；不确定时先用 align_stages.py）。
 
 用法：
@@ -28,8 +30,10 @@ except ImportError as e:  # pragma: no cover
     sys.exit(2)
 
 
-def cutout(body_ref: Image.Image, glow_img: Image.Image, floor: int = 14, grow: int = 2) -> Image.Image:
-    """floor：亮度低于它的背景噪点当作纯黑；grow：参考轮廓外扩几像素，盖住边缘的细小错位。"""
+def cutout(body_ref: Image.Image, glow_img: Image.Image, floor: int = 14, grow: int = 2,
+           max_dist: int | None = None) -> Image.Image:
+    """floor：亮度低于它的背景噪点当作纯黑；grow：参考轮廓外扩几像素，盖住边缘的细小错位；
+    max_dist：物体外的光只保留这么多像素以内（None = 不限制）。"""
     if body_ref.size != glow_img.size:
         raise ValueError(f"两张图尺寸不同：{body_ref.size} / {glow_img.size}")
     ref_a = body_ref.convert("RGBA").getchannel("A")
@@ -38,6 +42,11 @@ def cutout(body_ref: Image.Image, glow_img: Image.Image, floor: int = 14, grow: 
     body = np.asarray(ref_a).astype(np.float32) / 255.0
     rgb = np.asarray(glow_img.convert("RGB")).astype(np.float32)
     glow = np.clip((rgb.max(axis=-1) - floor) / (255.0 - floor), 0.0, 1.0)
+    if max_dist:
+        # 物体轮廓外扩 max_dist，再模糊一下得到柔和的边界：离物体越远，保留的光越少
+        near = body_ref.convert("RGBA").getchannel("A").point(lambda v: 255 if v > 0 else 0)
+        near = near.filter(ImageFilter.MaxFilter(2 * max_dist + 1)).filter(ImageFilter.GaussianBlur(max_dist / 2))
+        glow = glow * np.asarray(near).astype(np.float32) / 255.0
     alpha = np.maximum(body, glow)
     unmult = rgb / np.maximum(glow[..., None], 1e-3)
     out_rgb = np.where(body[..., None] >= glow[..., None], rgb, unmult)
@@ -51,6 +60,7 @@ def main() -> int:
     ap.add_argument("glow", type=Path, help="黑背景的发光图")
     ap.add_argument("--out", type=Path, help="输出路径（默认：<glow 名字>_nobg.png）")
     ap.add_argument("--floor", type=int, default=14, help="背景噪点阈值 0-255")
+    ap.add_argument("--max-dist", type=int, help="物体外的光只保留这么多像素以内（去掉悬空的水珠）")
     args = ap.parse_args()
 
     ref, glow = Image.open(args.reference), Image.open(args.glow)
@@ -58,7 +68,7 @@ def main() -> int:
     outside = np.asarray(ref.convert("RGBA").getchannel("A").filter(ImageFilter.MaxFilter(41))) == 0
     if outside.any() and rgb[outside].mean() > 30:
         print(f"[WARN] 参考轮廓以外的平均亮度 {rgb[outside].mean():.0f}：背景可能不是黑色，结果会发灰")
-    out_img = cutout(ref, glow, args.floor)
+    out_img = cutout(ref, glow, args.floor, max_dist=args.max_dist)
     out = args.out or args.glow.with_name(args.glow.stem + "_nobg.png")
     out_img.save(out)
     print(f"输出: {out}")

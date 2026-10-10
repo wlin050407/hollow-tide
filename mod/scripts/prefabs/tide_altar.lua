@@ -3,7 +3,7 @@
 -- 深潮祭坛（Tide Altar）。设计见 docs/TIDE_ALTAR_DESIGN.md。
 -- 现阶段只有"状态"，没有事件玩法（预警、伤害、奖励以后再加）：
 --   IDLE      平时：可以"唤潮"，可以锤
---   ACTIVE    唤潮中：换发光外观、灯光呼吸、底部溅水花；不能锤，不能再次唤潮；持续 T.ALTAR_ACTIVE_TIME 秒
+--   ACTIVE    唤潮中：换发光外观、脚下漩涡旋转、灯光呼吸、底部溅水花；不能锤，不能再次唤潮；持续 T.ALTAR_ACTIVE_TIME 秒
 --   COOLDOWN  冷却：外观变暗；可以锤，不能唤潮；T.ALTAR_COOLDOWN 秒后回到 IDLE
 --
 -- 网络：状态只在服务器上改，通过 netvar 同步给客户端。
@@ -21,6 +21,7 @@ local Log = require("hollowtide/log")
 local assets =
 {
     Asset("ANIM", "anim/tide_altar.zip"),
+    Asset("ANIM", "anim/tide_altar_swirl.zip"), -- 唤潮时脚下旋转的漩涡（本地特效，不是单独的 prefab）
 }
 
 local prefabs =
@@ -43,6 +44,46 @@ local function PulseLight(inst)
         T.ALTAR_LIGHT_COLOUR, T.ALTAR_LIGHT_PULSE)
 end
 
+-- 脚下的漩涡：每台机器自己生成的本地特效（不联网、不存档），挂在祭坛下面跟着它。
+-- 做法同原版 deerclopseyeball_sentryward.lua 的 CLIENT_CreateEyeball；
+-- 画在地面层（LAYER_BACKGROUND + SortOrder 3，同原版 damp_trail.lua），所以人和祭坛都盖在它上面。
+-- 旋转是动画数据里做的（make_anim.py spin，原理同原版预警圈 warning_shadow）。
+local function CreateSwirl()
+    local fx = CreateEntity()
+
+    --[[Non-networked entity]]
+    if not TheWorld.ismastersim then
+        fx.entity:SetCanSleep(false)
+    end
+    fx.persists = false
+
+    fx.entity:AddTransform()
+    fx.entity:AddAnimState()
+
+    fx:AddTag("FX")
+    fx:AddTag("NOCLICK")
+
+    fx.AnimState:SetBank("tide_altar_swirl")
+    fx.AnimState:SetBuild("tide_altar_swirl")
+    fx.AnimState:SetLayer(LAYER_BACKGROUND)
+    fx.AnimState:SetSortOrder(3)
+    fx.AnimState:PlayAnimation("pre")
+    fx.AnimState:PushAnimation("loop", true)
+
+    return fx
+end
+
+local function RemoveSwirl(inst)
+    if inst._swirl ~= nil then
+        local fx = inst._swirl
+        inst._swirl = nil
+        if fx:IsValid() then
+            fx.AnimState:PlayAnimation("pst") -- 缩回去再消失
+            fx:ListenForEvent("animover", fx.Remove)
+        end
+    end
+end
+
 local function TurnLightOff(inst)
     if TheWorld.ismastersim then
         inst.Light:Enable(false)
@@ -57,12 +98,17 @@ local function ApplyVisuals(inst)
         end
         inst.AnimState:SetMultColour(1, 1, 1, 1)
         inst.AnimState:SetLightOverride(T.ALTAR_LIGHT_OVERRIDE)
+        if inst._swirl == nil and not TheNet:IsDedicated() then -- 专用服务器没有画面，不需要
+            inst._swirl = CreateSwirl()
+            inst._swirl.entity:SetParent(inst.entity)
+        end
         if inst._pulse_task == nil then
             inst._pulse_high = false
             PulseLight(inst)
             inst._pulse_task = inst:DoPeriodicTask(T.ALTAR_LIGHT_PULSE, PulseLight)
         end
     else
+        RemoveSwirl(inst)
         if inst._pulse_task ~= nil then
             inst._pulse_task:Cancel()
             inst._pulse_task = nil
@@ -137,6 +183,12 @@ local function OnTimerDone(inst, data)
     end
 end
 
+local function OnRemoveEntity(inst)
+    if inst._swirl ~= nil and inst._swirl:IsValid() then
+        inst._swirl:Remove()
+    end
+end
+
 local function OnHammered(inst)
     inst.components.lootdropper:DropLoot() -- 有配方的建筑会按原版规则返还一部分材料
     SpawnPrefab("rock_break_fx").Transform:SetPosition(inst.Transform:GetWorldPosition())
@@ -205,6 +257,7 @@ local function fn()
     inst:AddComponent("lighttweener") -- 两端都要（见文件头）
 
     inst._state = net_tinybyte(inst.GUID, "tide_altar._state", "tide_altar_statedirty")
+    inst.OnRemoveEntity = OnRemoveEntity -- 两端都要：漩涡特效是每台机器自己生成的
 
     inst.entity:SetPristine()
 

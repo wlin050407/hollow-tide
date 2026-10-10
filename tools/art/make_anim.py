@@ -2,11 +2,12 @@
 """
 生成 DST 动画包（anim/<name>.zip），不依赖 Spriter 和 Don't Starve Mod Tools。
 
-只做静态外观：每张图 = 一个 symbol 的一帧 = 一个单帧动画（没有逐帧播放的动画）。
+每张图 = 一个 symbol 的一帧。item / stages 生成单帧动画；spin 用矩阵变换让同一张图转起来（多帧）。
 
 子命令
   item      PNG -> mod/anim/<name>.zip（bank = build = symbol = <name>，动画 "idle"），并输出审查预览图
   stages    几张对齐的图 -> 同一个包里的几个动画，例如可开采物的 full / med / low 破损阶段
+  spin      地面椭圆图案 -> 平躺在地上旋转的动画（pre / loop / pst），做法同原版预警圈
   preview   把任意动画包（自己的或原版的）的某个动画第 0 帧画出来，可以多个并排对比大小
   selftest  读入原版动画包再写出，确认与原文件逐字节相同（证明 kanim.py 的格式理解是对的）
 
@@ -74,7 +75,7 @@ def decode_ktex(data: bytes) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# 渲染：把动画某一帧画成图片（只支持缩放/翻转，不支持旋转——预览够用）
+# 渲染：把动画某一帧画成图片（支持任意 2D 变换：缩放、翻转、旋转、压扁）
 # ---------------------------------------------------------------------------
 
 def load_zip(path: Path) -> tuple[kanim.Build | None, kanim.AnimFile | None, dict[str, np.ndarray]]:
@@ -98,6 +99,26 @@ def build_frame_for(sym: kanim.BuildSymbol, frame: int) -> kanim.BuildFrame:
     return best
 
 
+def _affine_piece(img: Image.Image, quad: tuple[float, float, float, float],
+                  matrix: tuple[float, ...]) -> tuple[float, float, Image.Image]:
+    """一般的 2D 变换：x' = a*x + c*y + tx，y' = b*x + d*y + ty（kanim.py 里的约定，已用原版验证）。"""
+    a, b, c, d, tx, ty = matrix
+    x0, y0, x1, y1 = quad
+    M = np.array([[a, c], [b, d]], dtype=np.float64)
+    corners = np.array([[x0, y0], [x1, y0], [x0, y1], [x1, y1]]) @ M.T + np.array([tx, ty])
+    ox, oy = np.floor(corners.min(axis=0))
+    w = int(np.ceil(corners[:, 0].max() - ox)) + 1
+    h = int(np.ceil(corners[:, 1].max() - oy)) + 1
+    if abs(np.linalg.det(M)) < 1e-9:
+        return ox, oy, Image.new("RGBA", (1, 1))
+    S = np.diag([img.width / max(x1 - x0, 1e-9), img.height / max(y1 - y0, 1e-9)])
+    N = S @ np.linalg.inv(M)  # 输出像素 -> 贴图像素
+    off = N @ (np.array([ox, oy]) - np.array([tx, ty])) - S @ np.array([x0, y0])
+    out = img.transform((w, h), Image.AFFINE, (N[0, 0], N[0, 1], off[0], N[1, 0], N[1, 1], off[1]),
+                        resample=Image.BILINEAR)
+    return float(ox), float(oy), out
+
+
 def render_frame(build: kanim.Build, atlases: dict[str, np.ndarray], frame: kanim.AnimFrame,
                  warn=print) -> tuple[Image.Image, tuple[float, float]]:
     """返回 (RGBA 图片, 原点在图片里的像素坐标)。"""
@@ -112,8 +133,7 @@ def render_frame(build: kanim.Build, atlases: dict[str, np.ndarray], frame: kani
             warn(f"  预览：元素 {build.names.get(el.symbol, hex(el.symbol))} 不在 build {build.name} 里，跳过")
             continue
         a, b, c, d, tx, ty = el.matrix
-        if abs(b) > 1e-6 or abs(c) > 1e-6:
-            warn("  预览：有旋转的元素按未旋转绘制（只影响预览）")
+        rotated = abs(b) > 1e-9 or abs(c) > 1e-9
         bf = build_frame_for(sym, el.build_frame)
         for q in range(0, len(bf.verts), 6):
             quad = bf.verts[q:q + 6]
@@ -126,6 +146,9 @@ def render_frame(build: kanim.Build, atlases: dict[str, np.ndarray], frame: kani
             if c1 <= c0 or r1 <= r0:
                 continue
             img = Image.fromarray(np.ascontiguousarray(tex[r0:r1, c0:c1]), "RGBA")
+            if rotated:
+                pieces.append(_affine_piece(img, (min(xs), min(ys), max(xs), max(ys)), el.matrix))
+                continue
             w = max(1, round((max(xs) - min(xs)) * abs(a)))
             h = max(1, round((max(ys) - min(ys)) * abs(d)))
             img = img.resize((w, h), Image.LANCZOS)
@@ -385,6 +408,119 @@ def cmd_stages(args) -> int:
     return build_and_report(stages, args)
 
 
+# ---------------------------------------------------------------------------
+# spin：地面上旋转的图案（漩涡、法阵……），做法同原版预警圈 warning_shadow.zip
+#   贴图是正圆；动画每一帧的矩阵 = 压扁(y × K) × 旋转(θ) × 缩放(s)，看起来就像平躺在地上转
+#   K = 0.518 取自原版 warning_shadow（第 0 帧矩阵的 d 值），也就是游戏镜头下地面的透视压缩比例
+#   AI 画的是已经压扁的椭圆，所以先拉回正圆（宽高拉成一样）
+# ---------------------------------------------------------------------------
+
+GROUND_SQUASH = 0.518
+
+
+def spin_matrix(theta: float, scale: float, squash: float) -> tuple[float, float, float, float, float, float]:
+    import math
+    cs, sn = math.cos(theta), math.sin(theta)
+    # M = [[a, c], [b, d]] = Sy(K) · R(θ) · s
+    return (scale * cs, squash * scale * sn, -scale * sn, squash * scale * cs, 0.0, 0.0)
+
+
+def drop_islands(img: Image.Image, alpha_floor: int) -> Image.Image:
+    """只保留和图中心连在一起的部分，去掉飘在外面的水珠之类（它们会跟着整张图一起转，看着很假）。"""
+    from PIL import ImageDraw, ImageFilter
+    a = img.getchannel("A")
+    mask = a.point(lambda v: 255 if v > alpha_floor else 0)
+    cx, cy = img.width // 2, img.height // 2
+    if mask.getpixel((cx, cy)) == 0:
+        return img  # 中心是空的（例如圆环），不处理
+    ImageDraw.floodfill(mask, (cx, cy), 128)
+    keep = mask.point(lambda v: 255 if v == 128 else 0).filter(ImageFilter.MaxFilter(5))  # 外扩一点，保留抗锯齿边
+    out = img.copy()
+    out.putalpha(Image.fromarray(np.minimum(np.asarray(a), np.asarray(keep))))
+    return out
+
+
+def make_spin_package(src: Image.Image, name: str, width: int, period: int, pre: int, pst: int,
+                      clockwise: bool, alpha_floor: int, squash: float, level: int,
+                      keep_islands: bool = False) -> tuple[dict[str, bytes], dict]:
+    import math
+    img = src.convert("RGBA")
+    if not keep_islands:
+        img = drop_islands(img, alpha_floor)
+    x0, y0, x1, y1 = alpha_bbox(img, alpha_floor)
+    img = img.crop((x0, y0, x1, y1))
+    # 拉成正圆（不按原图比例）：贴图不圆的话，转起来轮廓会一胀一缩
+    circle_h = width
+    img = img.convert("RGBa").resize((width, circle_h), Image.LANCZOS).convert("RGBA")
+    sprite = Image.new("RGBA", (width + 2 * EDGE_PAD, circle_h + 2 * EDGE_PAD))
+    sprite.paste(img, (EDGE_PAD, EDGE_PAD))
+    w, h = sprite.size
+    aw, ah = next_pow2(w), next_pow2(h)
+    atlas = Image.new("RGBA", (aw, ah))
+    atlas.paste(sprite, (0, 0))
+    tex = png2tex.ktex_bytes(png2tex.mip_chain(atlas), BC3Encoder(level))
+
+    sym = kanim.strhash(name)
+    bx0, bx1, by0, by1 = -w / 2, w / 2, -h / 2, h / 2   # 圆心在原点
+    u1, v_bot = w / aw, 1.0 - h / ah
+    verts = [(bx0, by0, 0.0, 0.0, 1.0, 0.0), (bx1, by0, 0.0, u1, 1.0, 0.0), (bx0, by1, 0.0, 0.0, v_bot, 0.0),
+             (bx1, by0, 0.0, u1, 1.0, 0.0), (bx1, by1, 0.0, u1, v_bot, 0.0), (bx0, by1, 0.0, 0.0, v_bot, 0.0)]
+    build = kanim.Build(name=name, atlases=["atlas-0.tex"],
+                        symbols=[kanim.BuildSymbol(sym, [kanim.BuildFrame(0, 1, (0.0, 0.0, float(w), float(h)), verts)])],
+                        names={sym: name})
+
+    step = (1 if clockwise else -1) * 2 * math.pi / period
+
+    def frame(i: int, scale: float) -> kanim.AnimFrame:
+        m = spin_matrix(i * step, scale, squash)
+        bbox = (0.0, 0.0, w * scale, h * scale * squash)
+        return kanim.AnimFrame(bbox, [], [kanim.AnimElement(sym, 0, sym, m, -5.0)])
+
+    def ease(t: float) -> float:
+        return 1 - (1 - t) ** 2
+
+    anims = [
+        kanim.Animation("pre", kanim.FACING_ALL, sym, 30.0,
+                        [frame(i, max(0.02, ease((i + 1) / pre))) for i in range(pre)]),
+        kanim.Animation("loop", kanim.FACING_ALL, sym, 30.0, [frame(i, 1.0) for i in range(period)]),
+        kanim.Animation("pst", kanim.FACING_ALL, sym, 30.0,
+                        [frame(i, max(0.02, 1 - ease((i + 1) / pst))) for i in range(pst)]),
+    ]
+    anim = kanim.AnimFile(anims=anims, names={sym: name})
+    members = {"build.bin": kanim.write_build(build), "anim.bin": kanim.write_anim(anim), "atlas-0.tex": tex}
+    return members, {"texture": (w, h), "atlas": (aw, ah)}
+
+
+def cmd_spin(args) -> int:
+    members, meta = make_spin_package(Image.open(args.input), args.name, args.width, args.period, args.pre,
+                                      args.pst, args.clockwise, args.alpha_floor, args.squash, args.level,
+                                      keep_islands=args.keep_islands)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    out = args.out_dir / f"{args.name}.zip"
+    kanim.write_zip(out, members)
+    print(f"动画包: {out}")
+    print(f"  bank = build = symbol = {args.name!r}；动画 pre（{args.pre} 帧，长出来）/ loop（{args.period} 帧 = "
+          f"{args.period / 30:.1f} 秒转一圈）/ pst（{args.pst} 帧，缩回去）")
+    print(f"  正圆贴图 {meta['texture'][0]}x{meta['texture'][1]}，atlas {meta['atlas'][0]}x{meta['atlas'][1]}；"
+          f"地面上看是 {args.width} x {round(args.width * args.squash)} 的椭圆，圆心在实体原点")
+
+    build, anim, atlases = load_zip(out)
+    assert kanim.write_build(build) == members["build.bin"] and kanim.write_anim(anim) == members["anim.bin"]
+    loop = next(a for a in anim.anims if a.name == "loop")
+    frames = [render_frame(build, atlases, loop.frames[i])[0] for i in range(0, len(loop.frames), 2)]
+    size = (max(f.width for f in frames), max(f.height for f in frames))
+    gif = []
+    for f in frames:
+        bg = Image.new("RGBA", size, (124, 110, 84, 255))
+        bg.alpha_composite(f, ((size[0] - f.width) // 2, (size[1] - f.height) // 2))
+        gif.append(bg.convert("RGB"))
+    preview = args.preview or (REPO / "art" / "review" / f"{args.name}_spin.gif")
+    preview.parent.mkdir(parents=True, exist_ok=True)
+    gif[0].save(preview, save_all=True, append_images=gif[1:], duration=66, loop=0)
+    print(f"预览: {preview}（loop 动画，每 2 帧取 1 帧）")
+    return 0
+
+
 def cmd_preview(args) -> int:
     items = [render_ref(r) for r in args.refs]
     contact_sheet(items, args.scale).save(args.out)
@@ -442,6 +578,22 @@ def main() -> int:
     p.add_argument("--preview", type=Path, help="预览图路径（默认 art/review/<name>_ground_preview.png）")
     p.add_argument("--compare", action="append", help="并排对比的动画，格式 zip路径:动画名，可重复")
     p.set_defaults(func=cmd_stages)
+
+    p = sub.add_parser("spin", help="AI 画的地面椭圆图案 -> 平躺在地上旋转的动画（pre / loop / pst）")
+    p.add_argument("input", type=Path)
+    p.add_argument("--name", required=True, help="bank / build / symbol 名")
+    p.add_argument("--width", type=int, default=320, help="地面上椭圆的宽度（build 像素）")
+    p.add_argument("--period", type=int, default=90, help="转一圈的帧数（30 帧 = 1 秒）")
+    p.add_argument("--pre", type=int, default=12, help="出现时长出来的帧数")
+    p.add_argument("--pst", type=int, default=12, help="消失时缩回去的帧数")
+    p.add_argument("--clockwise", action="store_true", help="顺时针转（默认逆时针）")
+    p.add_argument("--keep-islands", action="store_true", help="保留和主体不相连的碎片（默认去掉）")
+    p.add_argument("--squash", type=float, default=GROUND_SQUASH, help="地面透视压缩比例（原版 0.518）")
+    p.add_argument("--alpha-floor", type=int, default=32, help="裁切时忽略 alpha 不超过此值的像素")
+    p.add_argument("--level", type=int, default=12, help="DXT 编码质量 0-18")
+    p.add_argument("--out-dir", type=Path, default=REPO / "mod" / "anim")
+    p.add_argument("--preview", type=Path, help="预览 GIF 路径（默认 art/review/<name>_spin.gif）")
+    p.set_defaults(func=cmd_spin)
 
     p = sub.add_parser("preview", help="渲染动画第 0 帧，多个并排")
     p.add_argument("refs", nargs="+", help="zip路径:动画名")
