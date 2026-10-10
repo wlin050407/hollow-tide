@@ -156,10 +156,20 @@ python tools\art\make_anim.py stages full=art\source\tide_crystal\tide_crystal_v
 
 ### 破损阶段的图从哪来
 
-- 现在的 `med` / `low` 是占位图：`art/source/tide_crystal/placeholder_stages.py` 在完整图上按墨线分出各根晶体，
-  把指定晶体的上半截连同墨线抠掉，断口描线、断面提亮。好处是和完整图严格对齐；缺点是看得出是"剪"出来的
-- 想要更好的效果，让 AI 在**完整图的基础上编辑**（上传完整图，要求同样构图、同样位置、同样品红背景，只把晶体打断），
-  再用 `remove_bg.py` 去背景，替换两张 PNG，重跑上面的命令。如果 AI 改动了构图导致底座对不齐，预览图里会看出来（红十字和底座的相对位置变了）
+1. 让 AI 在**完整图的基础上编辑**：上传完整图，要求同样构图、同样位置，只把晶体打断（一张"开裂、顶端断掉"，一张"只剩一小簇碎晶"）。
+   原图存为 `<名字>_med_chatgpt.png` / `<名字>_low_chatgpt.png`；如果是纯色背景，先用 `remove_bg.py`
+2. AI 改图时通常会把整体挪一点、缩放一点，用脚本把底座对齐到完整图：
+
+   ```bat
+   python tools\art\align_stages.py art\source\tide_crystal\tide_crystal_v1_chatgpt.png ^
+       art\source\tide_crystal\tide_crystal_cluster_med_chatgpt.png art\source\tide_crystal\tide_crystal_cluster_low_chatgpt.png ^
+       --out-names tide_crystal_cluster_med.png tide_crystal_cluster_low.png
+   ```
+
+   它只比较完整图底部 25%（石块底座），在 0.85–1.15 倍缩放和附近的平移里找重合最多的位置，输出和完整图同样大小的对齐图，
+   并生成 `art\review\<完整图名>_onion.png`（红线是完整图轮廓，看各阶段底座是否落在红线底部）。
+   潮蚀晶簇：med 缩放 0.975，low 缩放 0.925（low 的藤壶画大了约 10%，和搜索结果一致）
+3. 用对齐后的图跑上面的 `make_anim.py stages`
 
 - 输出 `mod\anim\tide_crystal.zip`：bank = build = symbol = `tide_crystal`，一个单帧动画 `idle`
 - 输出 `art\review\tide_crystal_ground_preview.png`：和原版宝石、燧石**按同样比例**并排，红十字是实体原点，横线是地面
@@ -191,7 +201,7 @@ inst.AnimState:PlayAnimation("idle")
 | prefab | 源图 | 尺寸 / 原点 | 状态 |
 |---|---|---|---|
 | `tide_crystal`（物品） | `tide_crystal_v2_chatgpt_nobg.png`（单块结晶） | 135 高，原点 0.5,0.7 | 待进游戏验证（第一版用 v1 晶簇图时已在游戏里显示正常） |
-| `tide_crystal_cluster`（可开采） | `tide_crystal_v1_chatgpt.png` + 两张占位破损图 | 300 高，原点 0.5,0.85，三个动画 full/med/low | 完整外观已在游戏里显示正常；破损阶段待验证 |
+| `tide_crystal_cluster`（可开采） | `tide_crystal_v1_chatgpt.png` + ChatGPT 破损图 med / low（已对齐） | 300 高，原点 0.5,0.85，三个动画 full/med/low | 完整外观已在游戏里显示正常；破损阶段待验证 |
 
 **颜色**：游戏按季节/昼夜给世界画面套颜色滤镜（见 API_NOTES「画面颜色」），地上的东西和物品栏图标颜色不同是正常的。
 秋天白天青色会偏绿。如果以后想让某种颜色在各季节都更稳定，要在出图时考虑滤镜，不是改转换工具。

@@ -48,3 +48,5 @@ no rocks, no seaweed, no ground, no text, no ground shadow, no frame
 |---|---|---|---|---|
 | 2026-10-11 | ChatGPT（模型待补） | n/a | `art/source/tide_crystal/tide_crystal_v1_chatgpt.png` | 晶簇造型；先做物品，后改作可开采晶簇 |
 | 2026-10-11 | ChatGPT（模型待补） | n/a | `art/source/tide_crystal/tide_crystal_v2_chatgpt.png` | 单块结晶 + 藤壶，品红背景；现在的物品图标和地面外观 |
+| 2026-10-11 | ChatGPT（模型待补，prompt 待补） | n/a | `art/source/tide_crystal/tide_crystal_cluster_med_chatgpt.png` | 在 v1 晶簇图基础上编辑：开裂、顶端断掉（晶簇 med 阶段），透明背景 |
+| 2026-10-11 | ChatGPT（模型待补，prompt 待补） | n/a | `art/source/tide_crystal/tide_crystal_cluster_low_chatgpt.png` | 在 v1 晶簇图基础上编辑：只剩一小簇碎晶（晶簇 low 阶段），透明背景 |
