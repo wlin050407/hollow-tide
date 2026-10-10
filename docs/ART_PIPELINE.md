@@ -202,7 +202,23 @@ inst.AnimState:PlayAnimation("idle")
 | prefab | 源图 | 尺寸 / 原点 | 状态 |
 |---|---|---|---|
 | `tide_crystal`（物品） | `tide_crystal_v2_chatgpt_nobg.png`（单块结晶） | 135 高，原点 0.5,0.7 | 待进游戏验证（第一版用 v1 晶簇图时已在游戏里显示正常） |
-| `tide_crystal_cluster`（可开采） | `tide_crystal_v1_chatgpt.png` + ChatGPT 破损图 med / low（已对齐） | 300 高，原点 0.5,0.85，三个动画 full/med/low | 完整外观已在游戏里显示正常；破损阶段待验证 |
+| `tide_crystal_cluster`（可开采） | `tide_crystal_v1_chatgpt.png` + ChatGPT 破损图 med / low（已对齐） | 300 高，原点 0.5,0.85，三个动画 full/med/low | 游戏里显示正常（2026-10-11） |
+| `tide_altar`（建筑） | `art/source/tide_altar/` 平时图 + 唤潮图（黑背景，`cutout_glow.py` 抠出） | 440 高（约 1.3 个人物高，比月晷 292、巨石 413 高），原点 0.58,0.93，动画 idle / active | 待进游戏验证 |
+
+### 祭坛的做法（黑背景的发光图）
+
+唤潮图是 AI 在平时图上改出来的，背景是黑的（AI 没给透明）。黑背景不能色键（墨线也是黑的），用：
+
+```bat
+python tools\art\cutout_glow.py art\source\tide_altar\tide_altar_idle_chatgpt.png art\source\tide_altar\tide_altar_active_chatgpt.png
+python tools\art\make_anim.py stages idle=art\source\tide_altar\tide_altar_idle_chatgpt.png ^
+    active=art\source\tide_altar\tide_altar_active_chatgpt_nobg.png --name tide_altar --height 440 --pivot 0.58,0.93
+python tools\art\prepare_icon.py art\source\tide_altar\tide_altar_idle_chatgpt.png --name tide_altar --padding 2
+python tools\art\png2tex.py art\icons\tide_altar.png
+```
+
+`cutout_glow.py`：物体本身用平时图的轮廓（墨线完整），物体外面的光晕和水珠按亮度反推透明度。
+原点 x = 0.58 而不是 0.5：海螺往左上方伸出去，底座在图的偏右位置。
 
 **颜色**：游戏按季节/昼夜给世界画面套颜色滤镜（见 API_NOTES「画面颜色」），地上的东西和物品栏图标颜色不同是正常的。
 秋天白天青色会偏绿。如果以后想让某种颜色在各季节都更稳定，要在出图时考虑滤镜，不是改转换工具。

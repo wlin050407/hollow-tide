@@ -37,6 +37,7 @@ hollow-tide/                       Git 仓库根目录
 │  ├─ art/prepare_icon.py          AI 图 → 64×64 图标 + 预览
 │  ├─ art/png2tex.py               PNG → DST 贴图 .tex + 图集 .xml（格式已对照原版验证）
 │  ├─ art/align_stages.py          把 AI 画的破损阶段图的底座对齐到完整图
+│  ├─ art/cutout_glow.py           黑背景的发光图 → 透明 PNG（轮廓取自同构图的透明图）
 │  ├─ art/make_anim.py             PNG → 动画包 anim/*.zip（地面外观、破损阶段）+ 预览 + 原版格式自检
 │  └─ art/kanim.py                 动画包 build.bin / anim.bin 读写库（make_anim 与 check_mod 共用）
 ├─ docs/                           设计与流程文档

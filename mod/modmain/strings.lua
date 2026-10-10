@@ -29,11 +29,27 @@ local TEXT =
         {
             TIDE_CRYSTAL = "Tide Crystal",
             TIDE_CRYSTAL_CLUSTER = "Tide Crystal Cluster",
+            TIDE_ALTAR = "Tide Altar",
+        },
+        RECIPE_DESC =
+        {
+            TIDE_ALTAR = "Borrow the tide from the deep.",
+        },
+        -- 动作文字：STRINGS.ACTIONS.ACTIVATE.<键>，键由 prefab 的 GetActivateVerb 返回
+        ACTIVATE =
+        {
+            TIDE_ALTAR = "Call the Tide",
         },
         DESCRIBE =
         {
             TIDE_CRYSTAL = "It hums like a shell held to the ear.",
             TIDE_CRYSTAL_CLUSTER = "The tide left this behind. It's still humming.",
+            TIDE_ALTAR =
+            {
+                GENERIC = "Something far below is listening.",
+                ACTIVE = "The tide is answering!",
+                COOLDOWN = "It needs to catch its breath.",
+            },
         },
     },
     zh =
@@ -42,11 +58,26 @@ local TEXT =
         {
             TIDE_CRYSTAL = "潮蚀结晶",
             TIDE_CRYSTAL_CLUSTER = "潮蚀晶簇",
+            TIDE_ALTAR = "深潮祭坛",
+        },
+        RECIPE_DESC =
+        {
+            TIDE_ALTAR = "向深海借一次潮水。",
+        },
+        ACTIVATE =
+        {
+            TIDE_ALTAR = "唤潮",
         },
         DESCRIBE =
         {
             TIDE_CRYSTAL = "贴近耳边，能听见很远很远的潮声。",
             TIDE_CRYSTAL_CLUSTER = "潮水退去后留下的，还在嗡嗡作响。",
+            TIDE_ALTAR =
+            {
+                GENERIC = "海螺深处，有什么东西在听。",
+                ACTIVE = "潮水在回应它！",
+                COOLDOWN = "它得先喘口气。",
+            },
         },
     },
 }
@@ -59,8 +90,17 @@ for key, value in pairs(text.NAMES) do
 end
 
 -- GENERIC 是所有角色的默认台词；以后可以按角色单独覆盖（STRINGS.CHARACTERS.WILLOW.DESCRIBE ...）
+-- 值是表时，键对应 inspectable.getstatus 返回的状态（GENERIC / ACTIVE / ...，原版 moondial 同样写法）
 for key, value in pairs(text.DESCRIBE) do
     STRINGS.CHARACTERS.GENERIC.DESCRIBE[key] = value
+end
+
+for key, value in pairs(text.RECIPE_DESC) do
+    STRINGS.RECIPE_DESC[key] = value
+end
+
+for key, value in pairs(text.ACTIVATE) do
+    STRINGS.ACTIONS.ACTIVATE[key] = value
 end
 
 require("hollowtide/log").Debug("strings loaded, language=%s", lang)

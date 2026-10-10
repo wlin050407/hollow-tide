@@ -115,6 +115,8 @@
 | `MakePlacer(name, bank, build, anim, onground, snap, metersnap, scale, fixedcameraoffset, facing, postinit_fn, offset, onfailedplacement)`；使用它的 prefab 文件开头要 `require "prefabutil"` | `prefabutil.lua`；原版 `moondial.lua` 等 |
 | 配方图标默认是 `<product>.tex`；没有对应图标时要在 config 里给 `image`（占位可用原版 `moondial.tex`，在 `inventoryimages2.xml`） | `recipe.lua` |
 | 建筑放置间距：`inst:SetDeploySmartRadius(r)`，原版注释为 recipe `min_spacing` 的一半 | `entityscript.lua`；`prefabs/moondial.lua` |
+| 配方的 `no_deconstruction`（布尔或 `function(inst)`）：拆解法杖只看它和 `AllRecipes`，**不看 workable**；函数在客户端也会调用，只能读标签/netvar | `recipe.lua`（`more_data.no_deconstruction`）；`prefabs/staff.lua` `destroystructure`；`componentactions.lua`；原版 `shadow_beef_bell` 配方 |
+| 锤掉建筑时 `lootdropper:DropLoot()` 会自动返还配方材料：每种材料 `ceil(数量 × TUNING.HAMMER_LOOT_PERCENT)`（`droprecipeloot` 默认开启） | `components/lootdropper.lua` `GetRecipeLoot`、`GenerateLoot` |
 
 ## 交互与事件（Tide Altar 用）
 
@@ -129,6 +131,12 @@
 | `FindPlayersInRange(x, y, z, range, isalive)`、`IsAnyPlayerInRange(...)` | `simutil.lua` |
 | `health:DoDelta(amount, overtime, cause, ...)`、`sanity:DoDelta(delta, overtime)`、`moisture:DoDelta(num, no_announce)`、`combat:GetAttacked(attacker, damage, weapon, stimuli, spdamage)` | `components/health.lua`、`sanity.lua`、`moisture.lua`、`combat.lua` |
 | 原版参考实现：`boatrace_start.lua`（制作 → 激活 → 限时事件 → 奖励 → 可锤）、`carnivalgame_*.lua` | `prefabs/` |
+| ⚠️ 空格键会对带 `inactive` 标签的非物品执行 ACTIVATE；不想被空格触发要设 `activatable.forcenopickupaction = true`（加标签 `activatable_forcenopickup`） | `components/playercontroller.lua`；原版 `winch.lua` |
+| `timer` 到时会**先** `StopTimer` 再推送 `timerdone`；`StartTimer` 遇到同名计时器只打印警告、不覆盖 | `components/timer.lua` `OnTimerDone`、`StartTimer` |
+| `inspectable.getstatus = fn(inst, viewer)` 返回状态键；`STRINGS.CHARACTERS.GENERIC.DESCRIBE.X` 写成表 `{GENERIC=..., 状态=...}`，返回 nil 时用 GENERIC | `components/inspectable.lua`；`stringutil.lua`；原版 `moondial.lua` |
+| 灯光：`Light:Enable` 只在服务器设（会同步）；要在两端各自渐变时加 `Light:EnableClientModulation(true)`，并在两端都加 `lighttweener` 组件 | `prefabs/moondial.lua`；`prefabs/deerclopseyeball_sentryward.lua`；`cavelight.lua` 等 52 个 prefab |
+| `inst:AddOrRemoveTag(tag, condition)`；标签会同步到客户端 | `entityscript.lua`；`components/activatable.lua` |
+| FX `splash`（`fx.lua`，自带 `turnoftides/common/together/water/splash/bird` 声音、`FinalOffset1`）；`splash_ocean` 注释为"旧海洋用"；声音 `dontstarve/common/together/moondial/craft`、`.../water_movement` | `fx.lua`；`stategraphs/SGmoondial.lua` |
 | 可作占位的原版资源：月晷 `moondial`（bank `moondial` / build `moondial_build` / anim `idle_new`；灯光在共享部分配置、在服务器上开关）；FX `warningshadow`（循环播放、`persists=false`，需手动 Remove）、`splash_ocean`、`crab_king_waterspout` | `prefabs/moondial.lua`、`prefabs/warningshadow.lua` 等 |
 
 ## 控制台与测试

@@ -15,4 +15,22 @@ T.TIDE_CRYSTAL_CLUSTER_LOOT = 2                      -- 必定掉落的结晶数
 T.TIDE_CRYSTAL_CLUSTER_BONUS_CHANCE = 0.5            -- 再多掉 1 个结晶的概率
 T.TIDE_CRYSTAL_CLUSTER_RADIUS = 0.45                 -- 碰撞半径，对应美术底座宽度（原版巨石 1）
 
+-- 深潮祭坛（见 docs/TIDE_ALTAR_DESIGN.md；现阶段只有状态切换，没有事件玩法）
+T.ALTAR_RECIPE_ROCKS = 10                -- 配方：石头（占位数值）
+T.ALTAR_RECIPE_CRYSTALS = 3              -- 配方：潮蚀结晶（占位数值）
+T.ALTAR_HAMMER_WORK = 4                  -- 锤几下拆掉：同原版月晷
+T.ALTAR_RADIUS = 0.5                     -- 碰撞半径，对应美术底座宽度（月晷 0.45）
+T.ALTAR_ACTIVE_TIME = 30                 -- "唤潮"状态持续秒数（以后事件玩法也用它）
+T.ALTAR_COOLDOWN = 60                    -- 冷却秒数
+T.ALTAR_LIGHT_RADIUS_LOW = 2.5           -- 唤潮时灯光半径在两者之间来回"呼吸"
+T.ALTAR_LIGHT_RADIUS_HIGH = 3.5
+T.ALTAR_LIGHT_PULSE = 1.2                -- 呼吸半个周期的秒数
+T.ALTAR_LIGHT_INTENSITY = 0.7
+T.ALTAR_LIGHT_FALLOFF = 0.7
+T.ALTAR_LIGHT_COLOUR = { 40 / 255, 200 / 255, 200 / 255 }
+T.ALTAR_LIGHT_OVERRIDE = 0.3             -- 唤潮时祭坛本身不受黑暗影响的程度（0..1）
+T.ALTAR_SPLASH_INTERVAL = 1.5            -- 唤潮时底部溅水花的间隔秒数
+T.ALTAR_SPLASH_RANGE = 0.8               -- 水花离祭坛中心的最大距离
+T.ALTAR_COOLDOWN_TINT = 0.6              -- 冷却时变暗的程度（颜色乘以它）
+
 return T

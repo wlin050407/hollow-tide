@@ -19,6 +19,7 @@ PrefabFiles =
 {
     "tide_crystal",
     "tide_crystal_cluster",
+    "tide_altar",
 }
 
 -- Mod 自己的贴图/动画资源在这里声明（prefab 专用的资源写在各自 prefab 文件里）。
@@ -27,13 +28,17 @@ Assets =
 {
     Asset("ATLAS", "images/inventoryimages/tide_crystal.xml"),
     Asset("IMAGE", "images/inventoryimages/tide_crystal.tex"),
+    Asset("ATLAS", "images/inventoryimages/tide_altar.xml"),  -- 祭坛的配方图标
+    Asset("IMAGE", "images/inventoryimages/tide_altar.tex"),
 }
 
 -- 在顶层注册（早于任何图标查询），并传 resolve 之后的路径（见 docs/API_NOTES.md「物品栏图标」）。
 -- 注册后，prefab 不需要设置 imagename / atlasname：默认图片名就是 "<prefab>.tex"。
 RegisterInventoryItemAtlas(GLOBAL.resolvefilepath("images/inventoryimages/tide_crystal.xml"), "tide_crystal.tex")
+RegisterInventoryItemAtlas(GLOBAL.resolvefilepath("images/inventoryimages/tide_altar.xml"), "tide_altar.tex")
 
 modimport("modmain/strings")
+modimport("modmain/recipes")
 modimport("modmain/debug_hooks")
 
 Log.Info("modmain loaded: version=%s folder=%s", modinfo.version, modname)

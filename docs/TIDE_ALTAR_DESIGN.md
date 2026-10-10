@@ -3,6 +3,22 @@
 > 状态：设计稿，计划第 3–5 天落地。下面所有 API 都已对照本机游戏脚本（build 756039）核实，出处见 [API_NOTES.md](API_NOTES.md)。
 > 代码骨架只用来说明结构，落地时逐段写、逐段进游戏验证，不要一次性整段粘贴。
 
+## 0. 当前实现（2026-10-11）：建筑 + 状态，没有事件玩法
+
+用户决定：玩法（预警、伤害、奖励、怪物）以后再做，先把祭坛作为建筑和它的三个状态做出来。
+代码在 `mod/scripts/prefabs/tide_altar.lua`，配方在 `mod/modmain/recipes.lua`，数值在 `tuning.lua`。
+
+| 状态 | 外观 | 能做什么 |
+|---|---|---|
+| IDLE 平时 | 原创外观 `idle` | 可以"唤潮"，可以锤 |
+| ACTIVE 唤潮中（30 秒） | 换成发光外观 `active`；青绿色灯光在两个半径之间"呼吸"；本体不受黑暗影响（LightOverride）；底部每 1.5 秒溅一次水花 | 不能锤、不能拆解法杖、不能再唤潮 |
+| COOLDOWN 冷却（60 秒） | `idle` 外观整体变暗 | 可以锤，不能唤潮 |
+
+和下面第 5 节骨架的差别：用了自己的美术（不再借月晷）；灯光两端各自渐变（`lighttweener` + `Light:EnableClientModulation(true)`，
+同原版 `deerclopseyeball_sentryward.lua`）；没有预警和奖励；空格键不会触发唤潮（`forcenopickupaction`）；
+唤潮中加标签 `tide_altar_active`，配方的 `no_deconstruction` 用它挡住拆解法杖。
+存档规则同第 4.2 节：唤潮中存档 → 读档后直接进入冷却。
+
 ## 1. 原版里已经有几乎一样的结构
 
 原版的 **龙舟赛起点 `boatrace_start`** 和 **游乐场小游戏 `carnivalgame_*`** 都是"玩家制作 → 放置 → 激活 → 限时事件 → 发奖励 → 可被锤掉"的建筑，它们用的组件和我们要用的一样（`activatable`、`timer`、`lootdropper`、`workable`）。这说明 Tide Altar 在技术上没有未知风险，遇到问题时可以直接去读这两个文件的写法。
