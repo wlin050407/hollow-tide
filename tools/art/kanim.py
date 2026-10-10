@@ -30,6 +30,8 @@ str = u32 长度 + 字节。
   * 1 个 build 单位 = 1 个 atlas 像素（gems/flint 都是 1:1）
   * UV 的 v=0 是贴图文件里存储的第一行；因为存储时上下翻转，所以 v 越大越靠近图片顶部：
     矩形上沿（y 较小）对应较大的 v
+  * 动画元素矩阵 (a, b, c, d, tx, ty)：x' = a*x + c*y + tx，y' = b*x + d*y + ty
+    （用原版 warning_shadow.zip 验证：每一帧都能拆成 "y 压扁 0.518 × 纯旋转 × 缩放"）
 """
 
 from __future__ import annotations

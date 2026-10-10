@@ -92,6 +92,9 @@
 | `inst:GetPosition()` 返回 `Vector3`；`Vector3:Get()` 返回 x, y, z | `entityscript.lua`；`vector3.lua` |
 | 破损阶段：原版巨石在 OnWork 里按剩余次数切 `full` / `med` / `low`（`< 1/3` 为 low，`< 2/3` 为 med），用 `AnimState:IsCurrentAnimation(anim)` 避免重复播放 | `prefabs/rocks.lua` `OnWork` |
 | 原版巨石的动画包结构：一个 symbol（`rock01`）有 3 帧，`full` / `med` / `low` 三个动画分别引用第 0/1/2 帧，变换相同 | 解析 `anim/rock.zip` 实测 |
+| 动画元素矩阵的含义：`x' = a·x + c·y + tx`，`y' = b·x + d·y + ty`（a b c d 按列存） | 原版 `warning_shadow.zip` 的 60 帧按这个约定拆解，每一帧都恰好是"y 压扁 0.518 × 纯旋转 × 缩放"（正交误差 0、行列式 1）；按另一种约定拆不开 |
+| 原版地面预警圈 `warningshadow` 的做法：贴图是一张**正圆**的阴影（212×199），动画 `idle` 60 帧、30fps，用矩阵把它压扁成椭圆（y × 0.518）并在"地面上"旋转（每帧约 6°，2 秒一圈），同时略微放大；实体本身是普通朝向 + `AnimState:SetFinalOffset(3)` | 解析 `anim/warning_shadow.zip`；`prefabs/warningshadow.lua` |
+| 发光相关：`AnimState:SetBloomEffectHandle("shaders/anim.ksh")`（156 个原版 prefab 在用）、`AnimState:SetLightOverride(x)`、`entity:AddLight()` + `Light:SetRadius/SetIntensity/SetFalloff/SetColour/Enable`；灯光渐变组件 `lighttweener`（`StartTween(light, rad, intensity, falloff, colour, time, callback)`） | `prefabs/moondial.lua`；`components/lighttweener.lua` |
 | `workable:SetOnLoadFn(fn)`：读档时 workable 先恢复 `workleft`，再调用 `fn(inst, data)`，可在这里按剩余次数恢复外观 | `components/workable.lua` `OnLoad` |
 
 ## 画面颜色
