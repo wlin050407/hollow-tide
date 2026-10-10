@@ -90,6 +90,9 @@
 | 碎裂特效 prefab：`mining_moonglass_fx`（在 `fx.lua` 表里定义）、`collapse_small`、`rock_break_fx`（自带 `dontstarve/wilson/rock_break` 声音） | `fx.lua`；`prefabs/rock_break_fx.lua`；`lunarrift_crystals.lua` |
 | `Prefab(name, fn, assets, prefabs)` 第 4 个参数是会生成的 prefab 列表，用来提前加载它们的资源 | 原版 prefab 通用写法（如 `rocks.lua`） |
 | `inst:GetPosition()` 返回 `Vector3`；`Vector3:Get()` 返回 x, y, z | `entityscript.lua`；`vector3.lua` |
+| 破损阶段：原版巨石在 OnWork 里按剩余次数切 `full` / `med` / `low`（`< 1/3` 为 low，`< 2/3` 为 med），用 `AnimState:IsCurrentAnimation(anim)` 避免重复播放 | `prefabs/rocks.lua` `OnWork` |
+| 原版巨石的动画包结构：一个 symbol（`rock01`）有 3 帧，`full` / `med` / `low` 三个动画分别引用第 0/1/2 帧，变换相同 | 解析 `anim/rock.zip` 实测 |
+| `workable:SetOnLoadFn(fn)`：读档时 workable 先恢复 `workleft`，再调用 `fn(inst, data)`，可在这里按剩余次数恢复外观 | `components/workable.lua` `OnLoad` |
 
 ## 画面颜色
 

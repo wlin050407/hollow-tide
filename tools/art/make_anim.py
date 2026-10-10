@@ -2,17 +2,19 @@
 """
 生成 DST 动画包（anim/<name>.zip），不依赖 Spriter 和 Don't Starve Mod Tools。
 
-现在只做最简单、也是最常用的一种：**一张图 = 一个 symbol 的一帧 = 一个单帧动画 "idle"**。
-用于物品掉在地上的样子；以后建筑/多帧动画需要时再扩展（格式读写在 kanim.py 里已经是通用的）。
+只做静态外观：每张图 = 一个 symbol 的一帧 = 一个单帧动画（没有逐帧播放的动画）。
 
 子命令
   item      PNG -> mod/anim/<name>.zip（bank = build = symbol = <name>，动画 "idle"），并输出审查预览图
+  stages    几张对齐的图 -> 同一个包里的几个动画，例如可开采物的 full / med / low 破损阶段
   preview   把任意动画包（自己的或原版的）的某个动画第 0 帧画出来，可以多个并排对比大小
   selftest  读入原版动画包再写出，确认与原文件逐字节相同（证明 kanim.py 的格式理解是对的）
 
 用法示例
-  python tools/art/make_anim.py item art/ground/tide_crystal.png --name tide_crystal --height 150 --pivot 0.5,0.75 \
+  python tools/art/make_anim.py item art/ground/tide_crystal.png --name tide_crystal --height 150 --pivot 0.5,0.75 \\
       --compare "<DST>/data/anim/gems.zip:bluegem_idle" --compare "<DST>/data/anim/flint.zip:idle"
+  python tools/art/make_anim.py stages full=art/source/a.png med=art/source/a_med.png low=art/source/a_low.png \\
+      --name tide_crystal_cluster --height 300 --pivot 0.5,0.85
   python tools/art/make_anim.py preview mod/anim/tide_crystal.zip:idle "<DST>/data/anim/gems.zip:bluegem_idle" --out x.png
   python tools/art/make_anim.py selftest "<DST>/data/anim/gems.zip" "<DST>/data/anim/flint.zip"
 
@@ -31,6 +33,7 @@ import argparse
 import struct
 import sys
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -192,22 +195,53 @@ def contact_sheet(items: list[tuple[str, Image.Image, tuple[float, float]]], sca
 
 
 # ---------------------------------------------------------------------------
-# item：一张图 -> 单帧动画包
+# 生成：一张或几张图 -> 一个 symbol 的几帧 -> 每帧一个单帧动画
+#   item   ：一张图，动画 "idle"
+#   stages ：几张**同样大小、已对齐**的图（例如完整 / 破损 / 只剩底座），每张一个动画（"full" / "med" / "low"）
+#            和原版巨石 rock.zip 的结构一样：同一个 symbol 的第 0/1/2 帧，三个动画各引用一帧
 # ---------------------------------------------------------------------------
 
-def prepare_sprite(src: Image.Image, height: int, alpha_floor: int) -> Image.Image:
-    """按不透明区域裁切，在预乘空间里缩放到指定高度，四周加透明边。"""
-    img = src.convert("RGBA")
+@dataclass
+class Stage:
+    anim: str
+    sprite: Image.Image            # 已缩放、四周带 EDGE_PAD 透明边
+    origin: tuple[float, float]    # 实体原点在 sprite 上的像素位置
+
+
+def alpha_bbox(img: Image.Image, alpha_floor: int) -> tuple[int, int, int, int]:
     a = np.asarray(img)[..., 3]
     ys, xs = np.nonzero(a > alpha_floor)
     if len(xs) == 0:
         raise ValueError("图片是全透明的")
-    img = img.crop((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))
-    w = max(1, round(img.width * height / img.height))
-    img = img.convert("RGBa").resize((w, height), Image.LANCZOS).convert("RGBA")
-    out = Image.new("RGBA", (w + 2 * EDGE_PAD, height + 2 * EDGE_PAD))
-    out.paste(img, (EDGE_PAD, EDGE_PAD))
-    return out
+    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+
+
+def prepare_stages(images: list[tuple[str, Image.Image]], height: int, pivot: tuple[float, float],
+                   alpha_floor: int) -> list[Stage]:
+    """第一张图决定缩放比例（它的不透明部分缩放到 height 高）和原点；其余各张用同样的比例和原点，
+    所以只要原图是对齐的，各阶段在游戏里的位置就严丝合缝。每张图各自裁掉透明边，省贴图空间。"""
+    imgs = [(n, im.convert("RGBA")) for n, im in images]
+    size0 = imgs[0][1].size
+    for n, im in imgs[1:]:
+        if im.size != size0:
+            raise ValueError(f"阶段图 {n!r} 的尺寸 {im.size} 与第一张 {size0} 不同：各阶段必须是同样大小、对齐好的画布")
+    rx0, ry0, rx1, ry1 = alpha_bbox(imgs[0][1], alpha_floor)
+    ref_w, ref_h = rx1 - rx0, ry1 - ry0
+    scale = height / ref_h
+    w0 = max(1, round(ref_w * scale))
+    ox_ref, oy_ref = pivot[0] * w0, pivot[1] * height   # 原点在第一张（缩放后、不含透明边）图上的位置
+    stages = []
+    for i, (name, im) in enumerate(imgs):
+        x0, y0, x1, y1 = (rx0, ry0, rx1, ry1) if i == 0 else alpha_bbox(im, alpha_floor)
+        crop = im.crop((x0, y0, x1, y1))
+        w = w0 if i == 0 else max(1, round((x1 - x0) * scale))
+        h = height if i == 0 else max(1, round((y1 - y0) * scale))
+        crop = crop.convert("RGBa").resize((w, h), Image.LANCZOS).convert("RGBA")
+        sprite = Image.new("RGBA", (w + 2 * EDGE_PAD, h + 2 * EDGE_PAD))
+        sprite.paste(crop, (EDGE_PAD, EDGE_PAD))
+        dx, dy = (x0 - rx0) * scale, (y0 - ry0) * scale   # 这张图相对第一张的偏移（缩放后）
+        stages.append(Stage(name, sprite, (EDGE_PAD + ox_ref - dx, EDGE_PAD + oy_ref - dy)))
+    return stages
 
 
 def next_pow2(n: int) -> int:
@@ -217,73 +251,98 @@ def next_pow2(n: int) -> int:
     return p
 
 
-def make_item(sprite: Image.Image, name: str, pivot: tuple[float, float], level: int) -> tuple[dict[str, bytes], dict]:
-    w, h = sprite.size
-    aw, ah = next_pow2(w), next_pow2(h)
+def pack(sizes: list[tuple[int, int]]) -> tuple[list[tuple[int, int]], int, int]:
+    """简单的货架排布：按高度从高到低一行行摆；在几种 2 的幂宽度里选总面积最小的。"""
+    order = sorted(range(len(sizes)), key=lambda i: -sizes[i][1])
+    best = None
+    width = next_pow2(max(w for w, _ in sizes))
+    while width <= 4096:
+        pos = [(0, 0)] * len(sizes)
+        x = y = row_h = 0
+        for i in order:
+            w, h = sizes[i]
+            if x + w > width:
+                x, y, row_h = 0, y + row_h, 0
+            pos[i] = (x, y)
+            x += w
+            row_h = max(row_h, h)
+        aw, ah = width, next_pow2(y + row_h)
+        if best is None or aw * ah < best[1] * best[2]:
+            best = (pos, aw, ah)
+        width *= 2
+    return best
+
+
+def make_package(stages: list[Stage], name: str, level: int) -> tuple[dict[str, bytes], dict]:
+    positions, aw, ah = pack([st.sprite.size for st in stages])
     atlas = Image.new("RGBA", (aw, ah))
-    atlas.paste(sprite, (0, 0))  # 放在左上角（正向图片坐标）
+    for st, (c, r) in zip(stages, positions):
+        atlas.paste(st.sprite, (c, r))  # 正向图片坐标（第 0 行是顶部）
     tex = png2tex.ktex_bytes(png2tex.mip_chain(atlas), BC3Encoder(level))
 
-    # 原点在图上的像素位置（含透明边）
-    px = EDGE_PAD + pivot[0] * (w - 2 * EDGE_PAD)
-    py = EDGE_PAD + pivot[1] * (h - 2 * EDGE_PAD)
-    x0, x1 = -px, w - px          # build 坐标：x 向右
-    y0, y1 = -py, h - py          # build 坐标：y 向下为正（y0 是上沿）
-    u0, u1 = 0.0, w / aw
-    v_top, v_bot = 1.0, 1.0 - h / ah  # 上沿 v 大（贴图上下翻转存储）
-    # 顶点顺序与原版一致：左上、右上、左下、右上、右下、左下
-    verts = [(x0, y0, 0.0, u0, v_top, 0.0), (x1, y0, 0.0, u1, v_top, 0.0), (x0, y1, 0.0, u0, v_bot, 0.0),
-             (x1, y0, 0.0, u1, v_top, 0.0), (x1, y1, 0.0, u1, v_bot, 0.0), (x0, y1, 0.0, u0, v_bot, 0.0)]
-    bbox = ((x0 + x1) / 2, (y0 + y1) / 2, float(w), float(h))
-
     sym = kanim.strhash(name)
-    build = kanim.Build(
-        name=name,
-        atlases=["atlas-0.tex"],
-        symbols=[kanim.BuildSymbol(sym, [kanim.BuildFrame(0, 1, bbox, verts)])],
-        names={sym: name},
-    )
-    element = kanim.AnimElement(symbol=sym, build_frame=0, layer=sym,
-                                matrix=(1.0, 0.0, 0.0, 1.0, 0.0, 0.0), z=-5.0)  # 单元素时原版 z=-5
-    anim = kanim.AnimFile(
-        anims=[kanim.Animation("idle", kanim.FACING_ALL, sym, 30.0, [kanim.AnimFrame(bbox, [], [element])])],
-        names={sym: name},
-    )
+    frames, anims = [], []
+    for i, (st, (c, r)) in enumerate(zip(stages, positions)):
+        w, h = st.sprite.size
+        px, py = st.origin
+        x0, x1 = -px, w - px          # build 坐标：x 向右
+        y0, y1 = -py, h - py          # build 坐标：y 向下为正（y0 是上沿）
+        u0, u1 = c / aw, (c + w) / aw
+        v_top, v_bot = 1.0 - r / ah, 1.0 - (r + h) / ah  # 上沿 v 大（贴图上下翻转存储）
+        # 顶点顺序与原版一致：左上、右上、左下、右上、右下、左下
+        verts = [(x0, y0, 0.0, u0, v_top, 0.0), (x1, y0, 0.0, u1, v_top, 0.0), (x0, y1, 0.0, u0, v_bot, 0.0),
+                 (x1, y0, 0.0, u1, v_top, 0.0), (x1, y1, 0.0, u1, v_bot, 0.0), (x0, y1, 0.0, u0, v_bot, 0.0)]
+        bbox = ((x0 + x1) / 2, (y0 + y1) / 2, float(w), float(h))
+        frames.append(kanim.BuildFrame(i, 1, bbox, verts))
+        element = kanim.AnimElement(symbol=sym, build_frame=i, layer=sym,
+                                    matrix=(1.0, 0.0, 0.0, 1.0, 0.0, 0.0), z=-5.0)  # 单元素时原版 z=-5
+        anims.append(kanim.Animation(st.anim, kanim.FACING_ALL, sym, 30.0, [kanim.AnimFrame(bbox, [], [element])]))
+
+    build = kanim.Build(name=name, atlases=["atlas-0.tex"], symbols=[kanim.BuildSymbol(sym, frames)], names={sym: name})
+    anim = kanim.AnimFile(anims=anims, names={sym: name})
     members = {"build.bin": kanim.write_build(build), "anim.bin": kanim.write_anim(anim), "atlas-0.tex": tex}
-    return members, {"sprite": (w, h), "atlas": (aw, ah), "origin_px": (px, py)}
+    return members, {"atlas": (aw, ah)}
 
 
-def cmd_item(args) -> int:
-    src = Image.open(args.input)
-    sprite = prepare_sprite(src, args.height, args.alpha_floor)
+def parse_pivot(text: str) -> tuple[float, float] | None:
     try:
-        pvx, pvy = (float(t) for t in args.pivot.split(","))
+        x, y = (float(t) for t in text.split(","))
+        return x, y
     except ValueError:
         print("[ERROR] --pivot 格式是 x,y，例如 0.5,0.75")
-        return 1
-    members, meta = make_item(sprite, args.name, (pvx, pvy), args.level)
+        return None
+
+
+def build_and_report(stages: list[Stage], args) -> int:
+    members, meta = make_package(stages, args.name, args.level)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     out = args.out_dir / f"{args.name}.zip"
     kanim.write_zip(out, members)
     print(f"动画包: {out}")
-    print(f"  bank = build = symbol = {args.name!r}，动画 'idle'（1 帧）")
-    print(f"  图 {meta['sprite'][0]}x{meta['sprite'][1]}（含 {EDGE_PAD}px 透明边），atlas {meta['atlas'][0]}x{meta['atlas'][1]}，"
-          f"原点在图上 ({meta['origin_px'][0]:.1f}, {meta['origin_px'][1]:.1f})")
+    print(f"  bank = build = symbol = {args.name!r}，atlas {meta['atlas'][0]}x{meta['atlas'][1]}")
+    for st in stages:
+        print(f"  动画 {st.anim!r}：图 {st.sprite.width}x{st.sprite.height}（含 {EDGE_PAD}px 透明边），"
+              f"原点在图上 ({st.origin[0]:.1f}, {st.origin[1]:.1f})")
 
-    # 回读：重新解析 zip，渲染 idle 第 0 帧，与输入的图比较
+    # 回读：重新解析 zip，逐个渲染动画，与输入的图比较
     build, anim, atlases = load_zip(out)
     assert kanim.write_build(build) == members["build.bin"] and kanim.write_anim(anim) == members["anim.bin"]
-    img, _ = render_frame(build, atlases, anim.anims[0].frames[0])
-    ref = np.asarray(sprite, dtype=np.float32)
-    got = np.asarray(img.crop((0, 0) + sprite.size), dtype=np.float32)
-    mask = ref[..., 3] > 25
-    err_rgb = float(np.abs(got[..., :3] - ref[..., :3])[mask].mean()) if mask.any() else 0.0
-    err_a = float(np.abs(got[..., 3] - ref[..., 3]).mean())
-    print(f"[OK] 回读：zip 结构可解析；渲染结果与原图平均误差 RGB {err_rgb:.1f} / Alpha {err_a:.1f}（DXT5 有损，10 左右正常）")
-    if err_rgb > 16 or err_a > 8:
+    by_name = {a.name: a for a in anim.anims}
+    worst_rgb = worst_a = 0.0
+    for st in stages:
+        img, (ox, oy) = render_frame(build, atlases, by_name[st.anim].frames[0])
+        left, top = round(ox - st.origin[0]), round(oy - st.origin[1])
+        ref = np.asarray(st.sprite, dtype=np.float32)
+        got = np.asarray(img.crop((left, top, left + st.sprite.width, top + st.sprite.height)), dtype=np.float32)
+        mask = ref[..., 3] > 25
+        worst_rgb = max(worst_rgb, float(np.abs(got[..., :3] - ref[..., :3])[mask].mean()) if mask.any() else 0.0)
+        worst_a = max(worst_a, float(np.abs(got[..., 3] - ref[..., 3]).mean()))
+    print(f"[OK] 回读：zip 结构可解析；渲染结果与原图平均误差（最差的一个动画）RGB {worst_rgb:.1f} / Alpha {worst_a:.1f}"
+          f"（DXT5 有损，10 左右正常）")
+    if worst_rgb > 16 or worst_a > 8:
         print("[WARN] 误差偏大，看一下预览图")
 
-    items = [render_ref(f"{out}:idle")]
+    items = [render_ref(f"{out}:{st.anim}") for st in stages]
     for ref_ in args.compare or []:
         try:
             items.append(render_ref(ref_))
@@ -294,6 +353,36 @@ def cmd_item(args) -> int:
     contact_sheet(items).save(preview)
     print(f"预览: {preview}（红色十字 = 实体原点，横线 = 地面；放大 2 倍）")
     return 0
+
+
+def cmd_item(args) -> int:
+    pivot = parse_pivot(args.pivot)
+    if pivot is None:
+        return 1
+    stages = prepare_stages([("idle", Image.open(args.input))], args.height, pivot, args.alpha_floor)
+    return build_and_report(stages, args)
+
+
+def cmd_stages(args) -> int:
+    pivot = parse_pivot(args.pivot)
+    if pivot is None:
+        return 1
+    images = []
+    for spec in args.stages:
+        anim, sep, path = spec.partition("=")
+        if not sep or not anim or not path:
+            print(f"[ERROR] {spec!r} 格式应为 动画名=图片路径，例如 full=art/source/x.png")
+            return 1
+        images.append((anim, Image.open(path)))
+    if len({a for a, _ in images}) != len(images):
+        print("[ERROR] 动画名重复")
+        return 1
+    try:
+        stages = prepare_stages(images, args.height, pivot, args.alpha_floor)
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        return 1
+    return build_and_report(stages, args)
 
 
 def cmd_preview(args) -> int:
@@ -341,6 +430,18 @@ def main() -> int:
     p.add_argument("--preview", type=Path, help="预览图路径（默认 art/review/<name>_ground_preview.png）")
     p.add_argument("--compare", action="append", help="并排对比的动画，格式 zip路径:动画名，可重复")
     p.set_defaults(func=cmd_item)
+
+    p = sub.add_parser("stages", help="几张对齐的图 -> 同一个 symbol 的几帧，每帧一个动画（如巨石的 full/med/low）")
+    p.add_argument("stages", nargs="+", help="动画名=图片路径，第一张决定缩放和原点，例如 full=a.png med=b.png low=c.png")
+    p.add_argument("--name", required=True, help="bank / build / symbol 名（通常等于 prefab 名）")
+    p.add_argument("--height", type=int, default=300, help="第一张图在游戏内的高度（build 像素）")
+    p.add_argument("--pivot", default="0.5,0.85", help="原点在第一张图上的比例位置 x,y")
+    p.add_argument("--alpha-floor", type=int, default=8, help="裁切时忽略 alpha 不超过此值的像素")
+    p.add_argument("--level", type=int, default=12, help="DXT 编码质量 0-18")
+    p.add_argument("--out-dir", type=Path, default=REPO / "mod" / "anim")
+    p.add_argument("--preview", type=Path, help="预览图路径（默认 art/review/<name>_ground_preview.png）")
+    p.add_argument("--compare", action="append", help="并排对比的动画，格式 zip路径:动画名，可重复")
+    p.set_defaults(func=cmd_stages)
 
     p = sub.add_parser("preview", help="渲染动画第 0 帧，多个并排")
     p.add_argument("refs", nargs="+", help="zip路径:动画名")

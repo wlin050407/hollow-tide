@@ -145,9 +145,21 @@ RegisterInventoryItemAtlas(GLOBAL.resolvefilepath("images/inventoryimages/tide_c
 python tools\art\make_anim.py item art\source\tide_crystal\tide_crystal_v2_chatgpt_nobg.png --name tide_crystal --height 135 --pivot 0.5,0.7 ^
     --compare "<DST安装目录>\data\anim\gems.zip:bluegem_idle" --compare "<DST安装目录>\data\anim\flint.zip:idle"
 
-python tools\art\make_anim.py item art\source\tide_crystal\tide_crystal_v1_chatgpt.png --name tide_crystal_cluster --height 300 --pivot 0.5,0.85 ^
-    --compare "<DST安装目录>\data\anim\rock.zip:full"
+python tools\art\make_anim.py stages full=art\source\tide_crystal\tide_crystal_v1_chatgpt.png ^
+    med=art\source\tide_crystal\tide_crystal_cluster_med.png low=art\source\tide_crystal\tide_crystal_cluster_low.png ^
+    --name tide_crystal_cluster --height 300 --pivot 0.5,0.85 --compare "<DST安装目录>\data\anim\rock.zip:full"
 ```
+
+`stages` 用于可开采物的破损阶段（结构和原版巨石 `rock.zip` 一样：一个 symbol 的第 0/1/2 帧，`full` / `med` / `low` 三个动画各引用一帧）。
+**要求：各阶段图是同样大小、对齐好的画布**（底座在每张图里的位置一样）。第一张图决定缩放比例和原点，
+后面几张用同样的比例和原点，所以底座在游戏里不会跳。每张图各自裁掉透明边，不浪费贴图。
+
+### 破损阶段的图从哪来
+
+- 现在的 `med` / `low` 是占位图：`art/source/tide_crystal/placeholder_stages.py` 在完整图上按墨线分出各根晶体，
+  把指定晶体的上半截连同墨线抠掉，断口描线、断面提亮。好处是和完整图严格对齐；缺点是看得出是"剪"出来的
+- 想要更好的效果，让 AI 在**完整图的基础上编辑**（上传完整图，要求同样构图、同样位置、同样品红背景，只把晶体打断），
+  再用 `remove_bg.py` 去背景，替换两张 PNG，重跑上面的命令。如果 AI 改动了构图导致底座对不齐，预览图里会看出来（红十字和底座的相对位置变了）
 
 - 输出 `mod\anim\tide_crystal.zip`：bank = build = symbol = `tide_crystal`，一个单帧动画 `idle`
 - 输出 `art\review\tide_crystal_ground_preview.png`：和原版宝石、燧石**按同样比例**并排，红十字是实体原点，横线是地面
@@ -179,7 +191,7 @@ inst.AnimState:PlayAnimation("idle")
 | prefab | 源图 | 尺寸 / 原点 | 状态 |
 |---|---|---|---|
 | `tide_crystal`（物品） | `tide_crystal_v2_chatgpt_nobg.png`（单块结晶） | 135 高，原点 0.5,0.7 | 待进游戏验证（第一版用 v1 晶簇图时已在游戏里显示正常） |
-| `tide_crystal_cluster`（可开采） | `tide_crystal_v1_chatgpt.png`（带石块的晶簇） | 300 高，原点 0.5,0.85 | 待进游戏验证 |
+| `tide_crystal_cluster`（可开采） | `tide_crystal_v1_chatgpt.png` + 两张占位破损图 | 300 高，原点 0.5,0.85，三个动画 full/med/low | 完整外观已在游戏里显示正常；破损阶段待验证 |
 
 **颜色**：游戏按季节/昼夜给世界画面套颜色滤镜（见 API_NOTES「画面颜色」），地上的东西和物品栏图标颜色不同是正常的。
 秋天白天青色会偏绿。如果以后想让某种颜色在各季节都更稳定，要在出图时考虑滤镜，不是改转换工具。
