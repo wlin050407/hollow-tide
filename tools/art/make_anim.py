@@ -9,7 +9,7 @@
   stages    几张对齐的图 -> 同一个包里的几个动画，例如可开采物的 full / med / low 破损阶段
   spin      地面椭圆图案 -> 平躺在地上旋转的动画（pre / loop / pst），做法同原版预警圈；
             加 --flow N 时先生成 N 张逐帧流动的图（中心转得快、往里吸），像原版海上漩涡那样逐帧播放；
-            给多张同一图案的变体时，外圈轮流换图（手绘动画式的"抖动"）
+            给多张同一图案的变体时，中心照样流动，外圈在相邻两张之间逐帧变形（白沫连续地长大、缩小、变形）
   preview   把任意动画包（自己的或原版的）的某个动画第 0 帧画出来，可以多个并排对比大小
   selftest  读入原版动画包再写出，确认与原文件逐字节相同（证明 kanim.py 的格式理解是对的）
 
@@ -457,33 +457,206 @@ def _polar(n: int):
     return c, np.sqrt(dx * dx + dy * dy) / (n / 2), np.arctan2(dy, dx)
 
 
+def _flow(img: np.ndarray, count: int, swirl: float, drain: float) -> list[np.ndarray]:
+    """flow map 交叉淡化（见 flow_frames）。img：预乘 alpha 的 float32 数组（0–255），返回 count 个同格式数组。"""
+    n = img.shape[0]
+    c, r, ang = _polar(n)
+    k = np.clip(1 - r / 0.85, 0, 1) ** 2
+
+    def sample(sx, sy):
+        sx = np.clip(sx, 0, n - 1.001)
+        sy = np.clip(sy, 0, n - 1.001)
+        x0 = np.floor(sx).astype(int)
+        y0 = np.floor(sy).astype(int)
+        fx = (sx - x0)[..., None]
+        fy = (sy - y0)[..., None]
+        top = img[y0, x0] * (1 - fx) + img[y0, x0 + 1] * fx
+        bot = img[y0 + 1, x0] * (1 - fx) + img[y0 + 1, x0 + 1] * fx
+        return top * (1 - fy) + bot * fy
+
+    def warp(phase):
+        theta = ang + swirl * k * phase
+        rr = (r + drain * k * phase) * (n / 2)
+        return sample(c + rr * np.cos(theta), c + rr * np.sin(theta))
+
+    out = []
+    for i in range(count):
+        p1 = i / count
+        p2 = (p1 + 0.5) % 1.0
+        w = abs(2 * p1 - 1)  # p1 刚回卷时它的权重是 0，所以看不到跳变
+        out.append(warp(p1) * (1 - w) + warp(p2) * w)
+    return out
+
+
+def flow_frames(circle: Image.Image, count: int, swirl: float, drain: float) -> list[Image.Image]:
+    """把一张正圆的漩涡图"画"成 count 帧会流动的循环动画（逐帧不同的图，不只是整体转）。
+
+    做法（游戏里做水面常用的 flow map 交叉淡化）：
+      * 越靠近中心转得越多（差速旋转），并稍微往中心"吸"一点；外圈 15% 不动，边缘的白沫保持清晰
+      * 两份相位差半个周期的变形叠在一起交替淡入淡出，所以能无缝循环、不会跳
+    count 帧正好是一个周期；第 count 帧和第 0 帧一样。
+    """
+    img = np.asarray(circle.convert("RGBa")).astype(np.float32)  # 预乘 alpha，插值不出黑边
+    out = []
+    for f in _flow(img, count, swirl, drain):
+        a = f[..., 3:4]
+        rgb = np.where(a > 0.5, f[..., :3] * 255.0 / np.maximum(a, 1e-3), 0)
+        out.append(Image.fromarray(np.dstack([rgb, a]).clip(0, 255).round().astype(np.uint8), "RGBA"))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 多张变体：外圈逐帧变形（morph）
+#
+# 同一个漩涡的几张手绘变体，外圈白沫各不相同。直接轮流换图会一跳一跳（2026-10-11 反馈"很不连贯"），
+# 直接交叉淡化会出现两圈半透明的重影。这里把每张图拆成"形状"和"颜色"分别过渡：
+#   * 形状：外轮廓、白沫区域各算一张有向距离场（SDF），两张图的距离场线性插值再取 0 等值线
+#     —— 轮廓始终是实心的一条线，白沫块会连续地长大、缩小、分开、合并，不会出现两条半透明的边
+#   * 颜色：白沫色、水色各自填满整张图后再交叉淡化（同类颜色混合，不会把白沫和深水混成灰色）
+#   * 外轮廓墨线：按插值后的轮廓重新描（粗细量自原图），不会断线
+# 中心不参与变形，用第一张变体做 flow 流动（同单张图的做法），按轮廓深度和外圈平滑衔接。
+# ---------------------------------------------------------------------------
+
+LUMA = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+FOAM_LUM = 150 / 255  # 亮度高于它算白沫（这套漩涡图：白沫约 230，水约 60–150，墨线 < 50）
+INK_LUM = 50 / 255    # 低于它算墨线
+RIM_BLEND = (0.095, 0.145)  # 离轮廓多深（按半径比例）从"外圈变形"过渡到"中心流动"
+
+
+def _edt(feature: np.ndarray) -> np.ndarray:
+    """每个像素到最近 True 像素的欧氏距离（精确值：先逐列求竖直距离 g，再逐行取 min((x-x')² + g²)）。"""
+    h, w = feature.shape
+    inf = float(h + w)
+    g = np.empty((h, w), np.float32)
+    g[0] = np.where(feature[0], 0, inf)
+    for y in range(1, h):
+        g[y] = np.where(feature[y], 0, g[y - 1] + 1)
+    for y in range(h - 2, -1, -1):
+        g[y] = np.minimum(g[y], g[y + 1] + 1)
+    xs = np.arange(w, dtype=np.float32)
+    dx2 = (xs[:, None] - xs[None, :]) ** 2
+    g2 = g * g
+    out = np.empty((h, w), np.float32)
+    for y in range(h):
+        out[y] = (dx2 + g2[y][None, :]).min(axis=1)
+    return np.sqrt(out)
+
+
+def _sdf(mask: np.ndarray) -> np.ndarray:
+    """有向距离：区域内为正、区域外为负，0 是边界。"""
+    return np.where(mask, _edt(~mask) - 0.5, -(_edt(mask) - 0.5)).astype(np.float32)
+
+
+def _box_blur(a: np.ndarray, r: int) -> np.ndarray:
+    pad = [(r + 1, r), (r + 1, r)] + [(0, 0)] * (a.ndim - 2)
+    s = np.pad(a, pad).cumsum(0).cumsum(1)
+    n = 2 * r + 1
+    h, w = a.shape[:2]
+    return (s[n:n + h, n:n + w] - s[0:h, n:n + w] - s[n:n + h, 0:w] + s[0:h, 0:w]) / (n * n)
+
+
+def _fill(col: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """mask 内保留原色，mask 外用附近 mask 内像素的平均色填满（半径逐级加倍的归一化盒式模糊）。"""
+    out = np.where(mask[..., None], col, 0).astype(np.float32)
+    have = mask.copy()
+    m = mask.astype(np.float32)
+    r = 1
+    while not have.all() and r <= 2 * max(mask.shape):
+        den = _box_blur(m, r)
+        ok = ~have & (den > 1e-4)
+        out[ok] = _box_blur(col * m[..., None], r)[ok] / den[ok][..., None]
+        have |= ok
+        r *= 2
+    return out
+
+
+def _local_max(a: np.ndarray, r: int) -> np.ndarray:
+    """(2r+1) x (2r+1) 方窗内的最大值。"""
+    out = a
+    for axis in (0, 1):
+        n = out.shape[axis]
+        p = np.pad(out, [(r, r) if i == axis else (0, 0) for i in range(2)], mode="edge")
+        out = np.max([np.take(p, range(j, j + n), axis=axis) for j in range(2 * r + 1)], axis=0)
+    return out
+
+
+def _thickness(sd: np.ndarray, ink_w: float) -> np.ndarray:
+    """附近（2·ink_w 范围内）离轮廓最深的距离 ≈ 当地厚度的一半。主体边缘约 2·ink_w，细水柱、小水珠小得多。"""
+    return _local_max(np.maximum(sd, 0), int(2 * ink_w) + 1)
+
+
+def _ink_px(sd: np.ndarray, ink_w: float) -> np.ndarray:
+    """每个像素处外轮廓墨线的粗细：一般是 ink_w，但不超过当地厚度的一半
+    （否则细的水柱、正在缩小消失的小水珠会整块变黑）。"""
+    return np.minimum(ink_w, 0.5 * _thickness(sd, ink_w))
+
+
+class _RimLayers:
+    """一张变体拆成：外轮廓 SDF、白沫 SDF、白沫色、水色、墨线色和墨线粗细（像素）。"""
+
+    def __init__(self, im: Image.Image):
+        img = np.asarray(im.convert("RGBa")).astype(np.float32) / 255.0
+        a = img[..., 3]
+        col = img[..., :3] / np.maximum(a[..., None], 1e-3)
+        lum = col @ LUMA
+        self.sd = _sdf(a > 0.5)
+        inside = self.sd > 0
+        dark = inside & (lum < INK_LUM)
+        self.ink_w = 1.0  # 外轮廓墨线粗细：从边缘往里，深色像素占比第一次低于一半的深度
+        for depth in np.arange(0.5, 20.0, 0.5):
+            band = (self.sd >= depth - 0.5) & (self.sd < depth)
+            if band.any() and dark[band].mean() < 0.5:
+                self.ink_w = float(depth)
+                break
+        ink_px = _ink_px(self.sd, self.ink_w)  # 细的水柱、小水珠里墨线变细，里面的浅色才算得上白沫
+        foam = inside & (lum > FOAM_LUM) & (self.sd > ink_px)
+        self.fd = _sdf(foam)
+        self.foam_col = _fill(col, foam)
+        self.water_col = _fill(col, inside & ~foam & (self.sd > ink_px + 1))
+        ink = dark & (self.sd < ink_px)
+        self.ink_col = col[ink].mean(axis=0) if ink.any() else np.zeros(3, np.float32)
+
+
+def _rim_morph(a: _RimLayers, b: _RimLayers, t: float) -> tuple[np.ndarray, np.ndarray]:
+    """a -> b 的第 t（0–1）处。返回（预乘 alpha 的 RGBA float 数组 0–1，插值后的轮廓 SDF）。"""
+    d = (1 - t) * a.sd + t * b.sd
+    fd = (1 - t) * a.fd + t * b.fd
+    ink_w = (1 - t) * a.ink_w + t * b.ink_w
+    thick = _thickness(d, ink_w)
+    ink_px = np.minimum(ink_w, 0.5 * thick)
+    alpha = np.clip(d + 0.5, 0, 1)
+    # 细的水柱、小水珠在原图里都是浅色：两张图的水柱位置不重合时，白沫的距离场插值到中途会先消失，
+    # 这时按白沫上色，免得变成一截深色的水
+    thin = np.clip((2 * ink_w - thick) / ink_w, 0, 1)
+    wf = (np.maximum(np.clip(fd + 0.5, 0, 1), thin) * np.clip(d - ink_px + 0.5, 0, 1))[..., None]
+    base = wf * ((1 - t) * a.foam_col + t * b.foam_col) + (1 - wf) * ((1 - t) * a.water_col + t * b.water_col)
+    wi = np.clip(ink_px - d + 0.5, 0, 1)[..., None]
+    col = wi * ((1 - t) * a.ink_col + t * b.ink_col) + (1 - wi) * base
+    return np.dstack([col * alpha[..., None], alpha]), d
+
+
 def align_variants(circles: list[Image.Image]) -> tuple[list[Image.Image], list[float]]:
-    """把每张变体绕圆心转到和第一张的中心螺旋最像的角度（只比较内圈 60%），减少换图时中心的跳动。
+    """把每张变体绕圆心转到外圈轮廓和第一张最重合的角度（2° 一档），变形时要走的距离最短。
     不做镜像：镜像会把螺旋方向和光照方向一起反过来。"""
-    n = circles[0].width
-    _, r, _ = _polar(n)
-    inner = r < 0.6
-
-    def lum(im):
-        a = np.asarray(im.convert("RGBA")).astype(np.float32)
-        v = (a[..., :3] @ np.array([0.299, 0.587, 0.114], dtype=np.float32))[inner]
-        return (v - v.mean()) / max(float(v.std()), 1e-6)
-
-    ref = lum(circles[0])
+    small = [c.resize((128, 128), Image.BILINEAR) for c in circles]
+    _, r, _ = _polar(128)
+    rim = r > 0.55
+    ref = np.asarray(small[0])[..., 3][rim] > 128
     out, angles = [circles[0]], [0.0]
-    for im in circles[1:]:
-        best = (-9.0, 0.0)
+    for im, sm in zip(circles[1:], small[1:]):
+        best = (2.0, 0.0)
         for deg in np.arange(0.0, 360.0, 2.0):
-            score = float((lum(im.rotate(float(deg), resample=Image.BILINEAR)) * ref).mean())
-            if score > best[0]:
-                best = (score, float(deg))
+            m = np.asarray(sm.rotate(float(deg), resample=Image.BILINEAR))[..., 3][rim] > 128
+            diff = float((m != ref).mean())
+            if diff < best[0]:
+                best = (diff, float(deg))
         angles.append(best[1])
         out.append(im.rotate(best[1], resample=Image.BICUBIC))
     return out, angles
 
 
 def order_variants(circles: list[Image.Image]) -> list[int]:
-    """排一个首尾相接的播放顺序，让相邻两张的外圈轮廓尽量接近（换图时跳得小）。变体不多，直接穷举。"""
+    """排一个首尾相接的播放顺序，让相邻两张的外圈轮廓尽量接近（变形幅度小）。变体不多，直接穷举。"""
     import itertools
     n = circles[0].width
     _, r, _ = _polar(n)
@@ -500,47 +673,31 @@ def order_variants(circles: list[Image.Image]) -> list[int]:
     return best[1]
 
 
-def flow_frames(circles: list[Image.Image], count: int, swirl: float, drain: float) -> list[Image.Image]:
-    """把正圆的漩涡图"画"成 count 帧会流动的循环动画（逐帧不同的图，不只是整体转）。
+def boil_frames(circles: list[Image.Image], steps: int, flow: int, swirl: float, drain: float) -> list[Image.Image]:
+    """几张已对齐、已排好顺序的变体（2 倍分辨率）-> 循环动画帧（1 倍分辨率）。
 
-    * 中心的水：差速旋转（越靠近中心转得越多）并往中心"吸"；两份相位差半个周期的变形交替淡入淡出，无缝循环
-      （游戏里做水面常用的 flow map 交叉淡化）
-    * 外圈 15% 不参与变形。只有一张图时外圈永远不动；有多张变体时，每张轮流显示 count/张数 帧，
-      外圈的白沫就像手绘动画的"抖线"一样在变（直接切换，不交叉淡化——淡化会让两圈白沫叠成半透明的重影）
-    count 帧正好是一个周期；第 count 帧和第 0 帧一样。
-    """
+    外圈：相邻两张之间用 steps 帧逐帧变形，最后一张变回第一张，首尾相接；
+    中心：第一张做 flow 帧一个周期的流动；两部分按轮廓深度平滑衔接。
+    总帧数 = lcm(张数 × steps, flow)，第 0 帧正好是第一张变体。"""
+    import math
+    layers = [_RimLayers(c) for c in circles]
+    k = len(layers)
     n = circles[0].width
-    imgs = [np.asarray(c.convert("RGBa")).astype(np.float32) for c in circles]  # 预乘 alpha，插值不出黑边
-    hold = count // len(imgs)
-    c, r, ang = _polar(n)
-    k = np.clip(1 - r / 0.85, 0, 1) ** 2
-
-    def sample(img, sx, sy):
-        sx = np.clip(sx, 0, n - 1.001)
-        sy = np.clip(sy, 0, n - 1.001)
-        x0 = np.floor(sx).astype(int)
-        y0 = np.floor(sy).astype(int)
-        fx = (sx - x0)[..., None]
-        fy = (sy - y0)[..., None]
-        top = img[y0, x0] * (1 - fx) + img[y0, x0 + 1] * fx
-        bot = img[y0 + 1, x0] * (1 - fx) + img[y0 + 1, x0 + 1] * fx
-        return top * (1 - fy) + bot * fy
-
-    def warp(img, phase):
-        theta = ang + swirl * k * phase
-        rr = (r + drain * k * phase) * (n / 2)
-        return sample(img, c + rr * np.cos(theta), c + rr * np.sin(theta))
-
+    centre = [f / 255.0 for f in _flow(np.asarray(circles[0].convert("RGBa")).astype(np.float32), flow, swirl, drain)]
+    d0, d1 = RIM_BLEND[0] * n / 2, RIM_BLEND[1] * n / 2
+    total = math.lcm(k * steps, flow)
     out = []
-    for i in range(count):
-        img = imgs[(i // hold) % len(imgs)]
-        p1 = i / count
-        p2 = (p1 + 0.5) % 1.0
-        w = abs(2 * p1 - 1)  # p1 刚回卷时它的权重是 0，所以看不到跳变
-        f = warp(img, p1) * (1 - w) + warp(img, p2) * w
+    for i in range(total):
+        j, s = divmod(i % (k * steps), steps)
+        rim, d = _rim_morph(layers[j], layers[(j + 1) % k], s / steps)
+        mid = centre[i % flow]
+        w = np.clip((d - d0) / (d1 - d0), 0, 1)
+        w = (w * w * (3 - 2 * w))[..., None] * mid[..., 3:4]
+        f = w * mid + (1 - w) * rim
+        f = f.reshape(n // 2, 2, n // 2, 2, 4).mean(axis=(1, 3))  # 预乘状态下 2x2 平均缩小，边缘不发黑
         a = f[..., 3:4]
-        rgb = np.where(a > 0.5, f[..., :3] * 255.0 / np.maximum(a, 1e-3), 0)
-        out.append(Image.fromarray(np.dstack([rgb, a]).clip(0, 255).round().astype(np.uint8), "RGBA"))
+        rgb = np.where(a > 0.5 / 255, f[..., :3] / np.maximum(a, 1e-6), 0)
+        out.append(Image.fromarray((np.dstack([rgb, a]) * 255).clip(0, 255).round().astype(np.uint8), "RGBA"))
     return out
 
 
@@ -557,26 +714,30 @@ def load_circle(src: Image.Image, size: int, alpha_floor: int, keep_islands: boo
 def make_spin_package(srcs: list[Image.Image], name: str, width: int, period: int, pre: int, pst: int,
                       clockwise: bool, alpha_floor: int, squash: float, level: int,
                       keep_islands: bool = False, flow: int = 0, flow_size: int = 248,
-                      flow_swirl: float = 2.2, flow_drain: float = 0.12) -> tuple[dict[str, bytes], dict]:
+                      flow_swirl: float = 2.2, flow_drain: float = 0.12,
+                      boil_steps: int = 10) -> tuple[dict[str, bytes], dict]:
     """flow = 0：一张图整体旋转（同原版预警圈）。
     flow = N：先用 flow_frames 生成 N 张逐帧不同的流动图（同原版海上漩涡那样逐帧播放），再叠加整体慢慢旋转。
-    srcs 有多张时（同一个漩涡的几个手绘变体），外圈轮流换图，N 必须是张数的整数倍。"""
+    srcs 有多张时（同一个漩涡的几个手绘变体）：中心用第一张做 N 帧一个周期的流动，外圈在相邻两张之间
+    每 boil_steps 帧变形过去（boil_frames），总帧数 = lcm(张数 × boil_steps, N)。"""
     import math
     if len(srcs) > 1 and not flow:
-        raise ValueError("多张变体需要配合 --flow 使用")
-    if flow and flow % len(srcs):
-        raise ValueError(f"--flow（{flow}）必须是变体张数（{len(srcs)}）的整数倍，每张显示一样多帧")
-    if flow and period % flow:
-        raise ValueError(f"--period（{period}）必须是 --flow（{flow}）的整数倍，否则循环接不上")
+        raise ValueError("多张变体需要配合 --flow 使用（中心流动一个周期的帧数）")
     tex_size = flow_size if flow else width
-    circles = [load_circle(sv, tex_size, alpha_floor, keep_islands) for sv in srcs]
+    pictures_n = math.lcm(len(srcs) * boil_steps, flow) if len(srcs) > 1 else flow
+    if flow and period % pictures_n:
+        raise ValueError(f"--period（{period}）必须是逐帧图张数（{pictures_n}）的整数倍，否则循环接不上")
     info: dict = {}
-    if len(circles) > 1:
+    if len(srcs) > 1:
+        circles = [load_circle(sv, 2 * tex_size, alpha_floor, keep_islands) for sv in srcs]  # 2 倍分辨率做变形
         circles, angles = align_variants(circles)
         order = order_variants(circles)
         circles = [circles[i] for i in order]
         info = {"order": order, "angles": angles}
-    pictures = flow_frames(circles, flow, flow_swirl, flow_drain) if flow else circles
+        pictures = boil_frames(circles, boil_steps, flow, flow_swirl, flow_drain)
+    else:
+        circles = [load_circle(srcs[0], tex_size, alpha_floor, keep_islands)]
+        pictures = flow_frames(circles[0], flow, flow_swirl, flow_drain) if flow else circles
 
     sprites = []
     for pic in pictures:
@@ -631,7 +792,8 @@ def cmd_spin(args) -> int:
                                           args.period, args.pre,
                                           args.pst, args.clockwise, args.alpha_floor, args.squash, args.level,
                                           keep_islands=args.keep_islands, flow=args.flow, flow_size=args.flow_size,
-                                          flow_swirl=args.flow_swirl, flow_drain=args.flow_drain)
+                                          flow_swirl=args.flow_swirl, flow_drain=args.flow_drain,
+                                          boil_steps=args.boil_steps)
     except ValueError as e:
         print(f"[ERROR] {e}")
         return 1
@@ -644,10 +806,11 @@ def cmd_spin(args) -> int:
     if meta["pictures"] > 1:
         print(f"  流动：{meta['pictures']} 张逐帧不同的图循环（{meta['pictures'] / 30:.2f} 秒一个周期），叠加整体旋转")
     if meta["variants"] > 1:
-        hold = meta["pictures"] // meta["variants"]
         names = [args.inputs[i].name for i in meta["order"]]
-        print(f"  外圈：{meta['variants']} 张变体轮流显示，每张 {hold} 帧（每秒换 {30 / hold:.0f} 次）；播放顺序 {names}")
-        print(f"  各变体为对齐中心螺旋转过的角度（度）：{[round(a, 1) for a in meta['angles']]}")
+        print(f"  中心：第一张变体流动，{args.flow} 帧一个周期；外圈：{meta['variants']} 张变体之间逐帧变形，"
+              f"每 {args.boil_steps} 帧变成下一张（{args.boil_steps / 30:.2f} 秒）")
+        print(f"  播放顺序 {names}")
+        print(f"  各变体为对齐外圈轮廓转过的角度（度）：{[round(a, 1) for a in meta['angles']]}")
     print(f"  正圆贴图 {meta['texture'][0]}x{meta['texture'][1]}，atlas {meta['atlas'][0]}x{meta['atlas'][1]}；"
           f"地面上看是 {args.width} x {round(args.width * args.squash)} 的椭圆，圆心在实体原点")
 
@@ -728,7 +891,7 @@ def main() -> int:
 
     p = sub.add_parser("spin", help="AI 画的地面椭圆图案 -> 平躺在地上旋转的动画（pre / loop / pst）")
     p.add_argument("inputs", type=Path, nargs="+",
-                   help="一张图；或同一个图案的几张变体（外圈轮流换，像手绘动画，需要配合 --flow）")
+                   help="一张图；或同一个图案的几张变体（外圈在变体之间逐帧变形，需要配合 --flow）")
     p.add_argument("--name", required=True, help="bank / build / symbol 名")
     p.add_argument("--width", type=int, default=320, help="地面上椭圆的宽度（build 像素）")
     p.add_argument("--period", type=int, default=90, help="转一圈的帧数（30 帧 = 1 秒）")
@@ -736,7 +899,10 @@ def main() -> int:
     p.add_argument("--pst", type=int, default=12, help="消失时缩回去的帧数")
     p.add_argument("--clockwise", action="store_true", help="顺时针转（默认逆时针）")
     p.add_argument("--keep-islands", action="store_true", help="保留和主体不相连的碎片（默认去掉）")
-    p.add_argument("--flow", type=int, default=0, help="生成多少张逐帧流动的图（0 = 只整体旋转）；--period 必须是它的整数倍")
+    p.add_argument("--flow", type=int, default=0,
+                   help="中心流动一个周期的帧数（0 = 只整体旋转）；--period 必须是逐帧图总张数的整数倍")
+    p.add_argument("--boil-steps", type=int, default=10,
+                   help="多张变体时，外圈从一张变形到下一张用多少帧（逐帧图总张数 = lcm(张数 × 它, --flow)）")
     p.add_argument("--flow-size", type=int, default=248, help="流动帧的贴图边长（像素），地面上的大小仍由 --width 决定")
     p.add_argument("--flow-swirl", type=float, default=2.2, help="一个周期里中心比外圈多转的角度（弧度）")
     p.add_argument("--flow-drain", type=float, default=0.12, help="一个周期里往中心吸进去的程度（半径比例）")

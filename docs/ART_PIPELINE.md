@@ -204,7 +204,7 @@ inst.AnimState:PlayAnimation("idle")
 | `tide_crystal`（物品） | `tide_crystal_v2_chatgpt_nobg.png`（单块结晶） | 135 高，原点 0.5,0.7 | 待进游戏验证（第一版用 v1 晶簇图时已在游戏里显示正常） |
 | `tide_crystal_cluster`（可开采） | `tide_crystal_v1_chatgpt.png` + ChatGPT 破损图 med / low（已对齐） | 300 高，原点 0.5,0.85，三个动画 full/med/low | 游戏里显示正常（2026-10-11） |
 | `tide_altar`（建筑） | `art/source/tide_altar/` 平时图 + 唤潮图（黑背景，`cutout_glow.py` 抠出） | 440 高（约 1.3 个人物高，比月晷 292、巨石 413 高），原点 0.58,0.93，动画 idle / active | 游戏里显示正常（2026-10-11）；去掉悬空水珠后待再看 |
-| `tide_altar_swirl`（祭坛脚下的漩涡） | `tide_altar_swirl_v1..v6_chatgpt.png`（同一个漩涡的 6 个手绘变体） | 地面上 320 × 166 的椭圆；30 帧流动循环（1 秒），外圈 6 个变体每 5 帧换一次；整体 6 秒一圈 | 待进游戏验证（上一版单图流动已在游戏里显示正常） |
+| `tide_altar_swirl`（祭坛脚下的漩涡） | `tide_altar_swirl_v1..v6_chatgpt.png`（同一个漩涡的 6 个手绘变体） | 地面上 320 × 166 的椭圆；60 张逐帧图（2 秒一循环）：中心 1 秒一个流动周期，外圈在 6 个变体之间逐帧变形（每 10 帧变成下一张）；整体 6 秒一圈 | 待进游戏验证（单图流动版已在游戏里显示正常） |
 
 ### 祭坛的做法（黑背景的发光图）
 
@@ -228,7 +228,7 @@ python tools\art\png2tex.py art\icons\tide_altar.png
 python tools\art\make_anim.py spin art\source\tide_altar\tide_altar_swirl_v1_chatgpt.png ^
     art\source\tide_altar\tide_altar_swirl_v2_chatgpt.png art\source\tide_altar\tide_altar_swirl_v3_chatgpt.png ^
     art\source\tide_altar\tide_altar_swirl_v4_chatgpt.png art\source\tide_altar\tide_altar_swirl_v5_chatgpt.png ^
-    art\source\tide_altar\tide_altar_swirl_v6_chatgpt.png --name tide_altar_swirl --width 320 --period 180 --flow 30
+    art\source\tide_altar\tide_altar_swirl_v6_chatgpt.png --name tide_altar_swirl --width 320 --period 180 --flow 30 --boil-steps 10
 ```
 
 （上一版只用一张图：`spin art\source\tide_altar\tide_altar_warning_chatgpt.png ... --period 192 --flow 32`，同样的命令还能用。）
@@ -245,13 +245,26 @@ python tools\art\make_anim.py spin art\source\tide_altar\tide_altar_swirl_v1_cha
 
 **多张变体**（2026-10-11 反馈：程序生成的帧"边缘全都完全一样"，中心效果不错）：给 `spin` 多张图时——
 
-* 中心照旧由程序做流动；外圈 15% 不变形，改成**每张变体轮流显示 `flow / 张数` 帧**（上面的命令：6 张 × 5 帧 = 30 帧，每秒换 6 次），
-  白沫轮廓像手绘动画的"抖线"一样一直在变
-* 变体之间**直接切换，不交叉淡化**：试过淡化，两圈不同的白沫叠在一起变成半透明的重影
-* 对齐：每张变体绕圆心转到中心螺旋和第一张最像的角度（只比内圈 60%，2° 一档，不镜像——镜像会把螺旋方向和光照一起反过来），
-  减少换图时中心跳动；播放顺序穷举出外圈轮廓差别最小、首尾相接的一圈。两项结果都会打印出来
-* `--flow` 必须是张数的整数倍，`--period` 必须是 `--flow` 的整数倍（否则循环接不上），不满足时直接报错
+* 中心：只用第一张做程序流动（`--flow` 帧一个周期），和单图版一样
+* 外圈：在相邻两张变体之间**逐帧变形**（`--boil-steps` 帧变成下一张，最后一张变回第一张），白沫连续地长大、缩小、分开、合并。
+  逐帧图总张数 = lcm(张数 × `--boil-steps`, `--flow`)，上面的命令是 lcm(60, 30) = 60 张，正好放满一张 2048×2048
+  （252px 一张最多放 64 张）；`--period` 必须是总张数的整数倍
+* 两部分按"离轮廓多深"平滑衔接（离边缘约 10%～15% 半径处），中心不会因为换变体而跳
+* 对齐：每张变体绕圆心转到外圈轮廓和第一张最重合的角度（2° 一档，不镜像——镜像会把螺旋方向和光照一起反过来）；
+  播放顺序穷举出外圈轮廓差别最小、首尾相接的一圈。两项结果都会打印出来
 * AI 画的变体最好构图一致（同样大小、同一个旋转方向、背景透明），只是外圈白沫不同
+
+变形是怎么做的（`make_anim.py` 里 `_RimLayers` / `_rim_morph`，纯 numpy）：
+
+* 试过的两种简单做法都不行：**轮流换图**（第一版）每次换图整张跳一下——相邻两帧的平均像素差平时约 4，
+  换图那一帧 46～56，每秒 6 次，就是"很不连贯"；**直接交叉淡化**会出现两圈不同的白沫叠在一起的半透明重影
+* 现在把每张图拆成"形状"和"颜色"：外轮廓、白沫区域各算一张有向距离场（SDF），两张图的距离场线性插值再取 0 等值线，
+  所以任何一帧的轮廓都是实心的一条线；白沫色、水色各自填满整张图后再交叉淡化（白沫和深水不会混成灰色）；
+  外轮廓墨线按插值后的轮廓重新描，粗细量自原图（这套图在 2 倍分辨率下约 4.5 像素）
+* 细的水柱、小水珠：墨线最多占当地厚度的一半，内部按白沫上色（否则缩小消失时会变成一团黑，或者变成一截深色的水）
+* 亮度阈值（`FOAM_LUM` 150 = 白沫，`INK_LUM` 50 = 墨线）是按这套漩涡图定的；换一套配色差别很大的图时可能要调
+* 结果：60 张图里相邻两张的平均像素差都在 7～8.5 之间，没有突跳（包括循环首尾）；每张关键帧上和原图基本一致
+* 单图版（`--flow` 不带多张图）和只旋转版的输出与之前逐字节相同
 
 **颜色**：游戏按季节/昼夜给世界画面套颜色滤镜（见 API_NOTES「画面颜色」），地上的东西和物品栏图标颜色不同是正常的。
 秋天白天青色会偏绿。如果以后想让某种颜色在各季节都更稳定，要在出图时考虑滤镜，不是改转换工具。
