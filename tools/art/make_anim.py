@@ -7,7 +7,8 @@
 子命令
   item      PNG -> mod/anim/<name>.zip（bank = build = symbol = <name>，动画 "idle"），并输出审查预览图
   stages    几张对齐的图 -> 同一个包里的几个动画，例如可开采物的 full / med / low 破损阶段
-  spin      地面椭圆图案 -> 平躺在地上旋转的动画（pre / loop / pst），做法同原版预警圈
+  spin      地面椭圆图案 -> 平躺在地上旋转的动画（pre / loop / pst），做法同原版预警圈；
+            加 --flow N 时先生成 N 张逐帧流动的图（中心转得快、往里吸），像原版海上漩涡那样逐帧播放
   preview   把任意动画包（自己的或原版的）的某个动画第 0 帧画出来，可以多个并排对比大小
   selftest  读入原版动画包再写出，确认与原文件逐字节相同（证明 kanim.py 的格式理解是对的）
 
@@ -274,12 +275,16 @@ def next_pow2(n: int) -> int:
     return p
 
 
+MAX_ATLAS = 2048  # 原版动画包里见过的最大贴图是 2048（moondial_build）；不超过它最稳妥（更大是否可用没验证）
+
+
 def pack(sizes: list[tuple[int, int]]) -> tuple[list[tuple[int, int]], int, int]:
-    """简单的货架排布：按高度从高到低一行行摆；在几种 2 的幂宽度里选总面积最小的。"""
+    """简单的货架排布：按高度从高到低一行行摆；在几种 2 的幂宽度里选总面积最小、其次最接近正方形的，
+    边长不超过 MAX_ATLAS（放不下时报错——需要拆成多张贴图，目前还没实现）。"""
     order = sorted(range(len(sizes)), key=lambda i: -sizes[i][1])
     best = None
     width = next_pow2(max(w for w, _ in sizes))
-    while width <= 4096:
+    while width <= MAX_ATLAS:
         pos = [(0, 0)] * len(sizes)
         x = y = row_h = 0
         for i in order:
@@ -290,10 +295,14 @@ def pack(sizes: list[tuple[int, int]]) -> tuple[list[tuple[int, int]], int, int]
             x += w
             row_h = max(row_h, h)
         aw, ah = width, next_pow2(y + row_h)
-        if best is None or aw * ah < best[1] * best[2]:
-            best = (pos, aw, ah)
+        if ah <= MAX_ATLAS:
+            key = (aw * ah, max(aw, ah))
+            if best is None or key < best[0]:
+                best = (key, pos, aw, ah)
         width *= 2
-    return best
+    if best is None:
+        raise ValueError(f"图太多/太大，一张 {MAX_ATLAS}x{MAX_ATLAS} 的贴图放不下（需要拆成多张 atlas，还没实现）")
+    return best[1], best[2], best[3]
 
 
 def make_package(stages: list[Stage], name: str, level: int) -> tuple[dict[str, bytes], dict]:
@@ -440,9 +449,57 @@ def drop_islands(img: Image.Image, alpha_floor: int) -> Image.Image:
     return out
 
 
+def flow_frames(circle: Image.Image, count: int, swirl: float, drain: float) -> list[Image.Image]:
+    """把一张正圆的漩涡图"画"成 count 帧会流动的循环动画（逐帧不同的图，不只是整体转）。
+
+    做法（游戏里做水面常用的 flow map 交叉淡化）：
+      * 越靠近中心转得越多（差速旋转），并稍微往中心"吸"一点；外圈 15% 不动，边缘的白沫保持清晰
+      * 两份相位差半个周期的变形叠在一起交替淡入淡出，所以能无缝循环、不会跳
+    count 帧正好是一个周期；第 count 帧和第 0 帧一样。
+    """
+    n = circle.width
+    img = np.asarray(circle.convert("RGBa")).astype(np.float32)  # 预乘 alpha，插值不出黑边
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
+    c = (n - 1) / 2
+    dx, dy = xx - c, yy - c
+    r = np.sqrt(dx * dx + dy * dy) / (n / 2)
+    ang = np.arctan2(dy, dx)
+    k = np.clip(1 - r / 0.85, 0, 1) ** 2
+
+    def sample(sx, sy):
+        sx = np.clip(sx, 0, n - 1.001)
+        sy = np.clip(sy, 0, n - 1.001)
+        x0 = np.floor(sx).astype(int)
+        y0 = np.floor(sy).astype(int)
+        fx = (sx - x0)[..., None]
+        fy = (sy - y0)[..., None]
+        top = img[y0, x0] * (1 - fx) + img[y0, x0 + 1] * fx
+        bot = img[y0 + 1, x0] * (1 - fx) + img[y0 + 1, x0 + 1] * fx
+        return top * (1 - fy) + bot * fy
+
+    def warp(phase):
+        theta = ang + swirl * k * phase
+        rr = (r + drain * k * phase) * (n / 2)
+        return sample(c + rr * np.cos(theta), c + rr * np.sin(theta))
+
+    out = []
+    for i in range(count):
+        p1 = i / count
+        p2 = (p1 + 0.5) % 1.0
+        w = abs(2 * p1 - 1)  # p1 刚回卷时它的权重是 0，所以看不到跳变
+        f = warp(p1) * (1 - w) + warp(p2) * w
+        a = f[..., 3:4]
+        rgb = np.where(a > 0.5, f[..., :3] * 255.0 / np.maximum(a, 1e-3), 0)
+        out.append(Image.fromarray(np.dstack([rgb, a]).clip(0, 255).round().astype(np.uint8), "RGBA"))
+    return out
+
+
 def make_spin_package(src: Image.Image, name: str, width: int, period: int, pre: int, pst: int,
                       clockwise: bool, alpha_floor: int, squash: float, level: int,
-                      keep_islands: bool = False) -> tuple[dict[str, bytes], dict]:
+                      keep_islands: bool = False, flow: int = 0, flow_size: int = 248,
+                      flow_swirl: float = 2.2, flow_drain: float = 0.12) -> tuple[dict[str, bytes], dict]:
+    """flow = 0：一张图整体旋转（同原版预警圈）。
+    flow = N：先用 flow_frames 生成 N 张逐帧不同的流动图（同原版海上漩涡那样逐帧播放），再叠加整体慢慢旋转。"""
     import math
     img = src.convert("RGBA")
     if not keep_islands:
@@ -450,31 +507,43 @@ def make_spin_package(src: Image.Image, name: str, width: int, period: int, pre:
     x0, y0, x1, y1 = alpha_bbox(img, alpha_floor)
     img = img.crop((x0, y0, x1, y1))
     # 拉成正圆（不按原图比例）：贴图不圆的话，转起来轮廓会一胀一缩
-    circle_h = width
-    img = img.convert("RGBa").resize((width, circle_h), Image.LANCZOS).convert("RGBA")
-    sprite = Image.new("RGBA", (width + 2 * EDGE_PAD, circle_h + 2 * EDGE_PAD))
-    sprite.paste(img, (EDGE_PAD, EDGE_PAD))
-    w, h = sprite.size
-    aw, ah = next_pow2(w), next_pow2(h)
+    tex_size = flow_size if flow else width
+    circle = img.convert("RGBa").resize((tex_size, tex_size), Image.LANCZOS).convert("RGBA")
+    pictures = flow_frames(circle, flow, flow_swirl, flow_drain) if flow else [circle]
+    if flow and period % flow:
+        raise ValueError(f"--period（{period}）必须是 --flow（{flow}）的整数倍，否则循环接不上")
+
+    sprites = []
+    for pic in pictures:
+        sp = Image.new("RGBA", (tex_size + 2 * EDGE_PAD, tex_size + 2 * EDGE_PAD))
+        sp.paste(pic, (EDGE_PAD, EDGE_PAD))
+        sprites.append(sp)
+    positions, aw, ah = pack([sp.size for sp in sprites])
     atlas = Image.new("RGBA", (aw, ah))
-    atlas.paste(sprite, (0, 0))
+    for sp, pos in zip(sprites, positions):
+        atlas.paste(sp, pos)
     tex = png2tex.ktex_bytes(png2tex.mip_chain(atlas), BC3Encoder(level))
 
     sym = kanim.strhash(name)
+    w = h = tex_size + 2 * EDGE_PAD
     bx0, bx1, by0, by1 = -w / 2, w / 2, -h / 2, h / 2   # 圆心在原点
-    u1, v_bot = w / aw, 1.0 - h / ah
-    verts = [(bx0, by0, 0.0, 0.0, 1.0, 0.0), (bx1, by0, 0.0, u1, 1.0, 0.0), (bx0, by1, 0.0, 0.0, v_bot, 0.0),
-             (bx1, by0, 0.0, u1, 1.0, 0.0), (bx1, by1, 0.0, u1, v_bot, 0.0), (bx0, by1, 0.0, 0.0, v_bot, 0.0)]
-    build = kanim.Build(name=name, atlases=["atlas-0.tex"],
-                        symbols=[kanim.BuildSymbol(sym, [kanim.BuildFrame(0, 1, (0.0, 0.0, float(w), float(h)), verts)])],
-                        names={sym: name})
+    frames = []
+    for i, (c0, r0) in enumerate(positions):
+        u0, u1 = c0 / aw, (c0 + w) / aw
+        v_top, v_bot = 1.0 - r0 / ah, 1.0 - (r0 + h) / ah
+        verts = [(bx0, by0, 0.0, u0, v_top, 0.0), (bx1, by0, 0.0, u1, v_top, 0.0), (bx0, by1, 0.0, u0, v_bot, 0.0),
+                 (bx1, by0, 0.0, u1, v_top, 0.0), (bx1, by1, 0.0, u1, v_bot, 0.0), (bx0, by1, 0.0, u0, v_bot, 0.0)]
+        frames.append(kanim.BuildFrame(i, 1, (0.0, 0.0, float(w), float(h)), verts))
+    build = kanim.Build(name=name, atlases=["atlas-0.tex"], symbols=[kanim.BuildSymbol(sym, frames)], names={sym: name})
 
+    base_scale = width / tex_size   # 贴图分辨率和地面上大小可以不同
     step = (1 if clockwise else -1) * 2 * math.pi / period
+    npic = len(pictures)
 
     def frame(i: int, scale: float) -> kanim.AnimFrame:
-        m = spin_matrix(i * step, scale, squash)
-        bbox = (0.0, 0.0, w * scale, h * scale * squash)
-        return kanim.AnimFrame(bbox, [], [kanim.AnimElement(sym, 0, sym, m, -5.0)])
+        m = spin_matrix(i * step, scale * base_scale, squash)
+        bbox = (0.0, 0.0, w * scale * base_scale, h * scale * base_scale * squash)
+        return kanim.AnimFrame(bbox, [], [kanim.AnimElement(sym, i % npic, sym, m, -5.0)])
 
     def ease(t: float) -> float:
         return 1 - (1 - t) ** 2
@@ -488,19 +557,26 @@ def make_spin_package(src: Image.Image, name: str, width: int, period: int, pre:
     ]
     anim = kanim.AnimFile(anims=anims, names={sym: name})
     members = {"build.bin": kanim.write_build(build), "anim.bin": kanim.write_anim(anim), "atlas-0.tex": tex}
-    return members, {"texture": (w, h), "atlas": (aw, ah)}
+    return members, {"texture": (w, h), "atlas": (aw, ah), "pictures": npic}
 
 
 def cmd_spin(args) -> int:
-    members, meta = make_spin_package(Image.open(args.input), args.name, args.width, args.period, args.pre,
-                                      args.pst, args.clockwise, args.alpha_floor, args.squash, args.level,
-                                      keep_islands=args.keep_islands)
+    try:
+        members, meta = make_spin_package(Image.open(args.input), args.name, args.width, args.period, args.pre,
+                                          args.pst, args.clockwise, args.alpha_floor, args.squash, args.level,
+                                          keep_islands=args.keep_islands, flow=args.flow, flow_size=args.flow_size,
+                                          flow_swirl=args.flow_swirl, flow_drain=args.flow_drain)
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        return 1
     args.out_dir.mkdir(parents=True, exist_ok=True)
     out = args.out_dir / f"{args.name}.zip"
     kanim.write_zip(out, members)
     print(f"动画包: {out}")
     print(f"  bank = build = symbol = {args.name!r}；动画 pre（{args.pre} 帧，长出来）/ loop（{args.period} 帧 = "
           f"{args.period / 30:.1f} 秒转一圈）/ pst（{args.pst} 帧，缩回去）")
+    if meta["pictures"] > 1:
+        print(f"  流动：{meta['pictures']} 张逐帧不同的图循环（{meta['pictures'] / 30:.2f} 秒一个周期），叠加整体旋转")
     print(f"  正圆贴图 {meta['texture'][0]}x{meta['texture'][1]}，atlas {meta['atlas'][0]}x{meta['atlas'][1]}；"
           f"地面上看是 {args.width} x {round(args.width * args.squash)} 的椭圆，圆心在实体原点")
 
@@ -588,6 +664,10 @@ def main() -> int:
     p.add_argument("--pst", type=int, default=12, help="消失时缩回去的帧数")
     p.add_argument("--clockwise", action="store_true", help="顺时针转（默认逆时针）")
     p.add_argument("--keep-islands", action="store_true", help="保留和主体不相连的碎片（默认去掉）")
+    p.add_argument("--flow", type=int, default=0, help="生成多少张逐帧流动的图（0 = 只整体旋转）；--period 必须是它的整数倍")
+    p.add_argument("--flow-size", type=int, default=248, help="流动帧的贴图边长（像素），地面上的大小仍由 --width 决定")
+    p.add_argument("--flow-swirl", type=float, default=2.2, help="一个周期里中心比外圈多转的角度（弧度）")
+    p.add_argument("--flow-drain", type=float, default=0.12, help="一个周期里往中心吸进去的程度（半径比例）")
     p.add_argument("--squash", type=float, default=GROUND_SQUASH, help="地面透视压缩比例（原版 0.518）")
     p.add_argument("--alpha-floor", type=int, default=32, help="裁切时忽略 alpha 不超过此值的像素")
     p.add_argument("--level", type=int, default=12, help="DXT 编码质量 0-18")

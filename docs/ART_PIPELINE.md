@@ -204,7 +204,7 @@ inst.AnimState:PlayAnimation("idle")
 | `tide_crystal`（物品） | `tide_crystal_v2_chatgpt_nobg.png`（单块结晶） | 135 高，原点 0.5,0.7 | 待进游戏验证（第一版用 v1 晶簇图时已在游戏里显示正常） |
 | `tide_crystal_cluster`（可开采） | `tide_crystal_v1_chatgpt.png` + ChatGPT 破损图 med / low（已对齐） | 300 高，原点 0.5,0.85，三个动画 full/med/low | 游戏里显示正常（2026-10-11） |
 | `tide_altar`（建筑） | `art/source/tide_altar/` 平时图 + 唤潮图（黑背景，`cutout_glow.py` 抠出） | 440 高（约 1.3 个人物高，比月晷 292、巨石 413 高），原点 0.58,0.93，动画 idle / active | 游戏里显示正常（2026-10-11）；去掉悬空水珠后待再看 |
-| `tide_altar_swirl`（祭坛脚下的漩涡） | `tide_altar_warning_chatgpt.png` | 地面上 320 × 166 的椭圆，3 秒一圈 | 待进游戏验证 |
+| `tide_altar_swirl`（祭坛脚下的漩涡） | `tide_altar_warning_chatgpt.png` | 地面上 320 × 166 的椭圆；32 帧流动循环（1.07 秒）+ 整体 6.4 秒一圈 | 待进游戏验证 |
 
 ### 祭坛的做法（黑背景的发光图）
 
@@ -224,12 +224,19 @@ python tools\art\png2tex.py art\icons\tide_altar.png
 脚下旋转的漩涡（用的是潮痕预警那张图）：
 
 ```bat
-python tools\art\make_anim.py spin art\source\tide_altar\tide_altar_warning_chatgpt.png --name tide_altar_swirl --width 320 --period 90
+python tools\art\make_anim.py spin art\source\tide_altar\tide_altar_warning_chatgpt.png --name tide_altar_swirl --width 320 --period 192 --flow 32
 ```
 
 `spin` 的原理同原版预警圈：把 AI 画的椭圆拉回正圆做贴图，动画每帧用矩阵"压扁 × 旋转 × 缩放"，看起来就平躺在地上转。
 输出 pre（长出来）/ loop（`--period` 帧转一圈）/ pst（缩回去）三个动画，以及 `art\review\<名字>_spin.gif` 预览。
 和主体不相连的水珠默认去掉（`--keep-islands` 保留）；转的方向不对时加 `--clockwise`。
+
+`--flow 32`：只整体旋转看起来像一张贴纸在转（2026-10-11 反馈"太粗糙"）。原版海上漩涡是 59 帧逐帧手绘；
+我们没有手绘师，AI 也画不出几十张前后一致的帧（每张都会重画，播放时会闪），所以用程序把同一张图"画"成 32 张逐帧不同的图：
+越靠近中心转得越多、往中心吸，外圈白沫不动，两层相位错开交替淡入淡出，1.07 秒无缝循环；再叠加整体 6.4 秒一圈的慢转。
+贴图 32 帧 × 252px，打包成 1024×2048（打包时边长不超过 2048，和原版见过的最大贴图一致）。
+可调：`--flow-swirl`（中心多转多少）、`--flow-drain`（往里吸多少）、`--flow-size`（每帧分辨率）。
+以后有真正的手绘逐帧图时，也可以扩展成直接读一组 PNG 帧。
 原点 x = 0.58 而不是 0.5：海螺往左上方伸出去，底座在图的偏右位置。
 
 **颜色**：游戏按季节/昼夜给世界画面套颜色滤镜（见 API_NOTES「画面颜色」），地上的东西和物品栏图标颜色不同是正常的。
