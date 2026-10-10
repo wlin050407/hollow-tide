@@ -673,17 +673,19 @@ def order_variants(circles: list[Image.Image]) -> list[int]:
     return best[1]
 
 
-def boil_frames(circles: list[Image.Image], steps: int, flow: int, swirl: float, drain: float) -> list[Image.Image]:
+def boil_frames(circles: list[Image.Image], steps: int, flow: int, swirl: float, drain: float,
+                centre_img: Image.Image | None = None) -> list[Image.Image]:
     """几张已对齐、已排好顺序的变体（2 倍分辨率）-> 循环动画帧（1 倍分辨率）。
 
     外圈：相邻两张之间用 steps 帧逐帧变形，最后一张变回第一张，首尾相接；
-    中心：第一张做 flow 帧一个周期的流动；两部分按轮廓深度平滑衔接。
-    总帧数 = lcm(张数 × steps, flow)，第 0 帧正好是第一张变体。"""
+    中心：centre_img（默认第一张变体）做 flow 帧一个周期的流动；两部分按轮廓深度平滑衔接。
+    总帧数 = lcm(张数 × steps, flow)，第 0 帧的外圈正好是第一张变体。"""
     import math
     layers = [_RimLayers(c) for c in circles]
     k = len(layers)
     n = circles[0].width
-    centre = [f / 255.0 for f in _flow(np.asarray(circles[0].convert("RGBa")).astype(np.float32), flow, swirl, drain)]
+    src = np.asarray((centre_img or circles[0]).convert("RGBa")).astype(np.float32)
+    centre = [f / 255.0 for f in _flow(src, flow, swirl, drain)]
     d0, d1 = RIM_BLEND[0] * n / 2, RIM_BLEND[1] * n / 2
     total = math.lcm(k * steps, flow)
     out = []
@@ -715,14 +717,17 @@ def make_spin_package(srcs: list[Image.Image], name: str, width: int, period: in
                       clockwise: bool, alpha_floor: int, squash: float, level: int,
                       keep_islands: bool = False, flow: int = 0, flow_size: int = 248,
                       flow_swirl: float = 2.2, flow_drain: float = 0.12,
-                      boil_steps: int = 10) -> tuple[dict[str, bytes], dict]:
+                      boil_steps: int = 10, mirror_rim: bool = False) -> tuple[dict[str, bytes], dict]:
     """flow = 0：一张图整体旋转（同原版预警圈）。
     flow = N：先用 flow_frames 生成 N 张逐帧不同的流动图（同原版海上漩涡那样逐帧播放），再叠加整体慢慢旋转。
     srcs 有多张时（同一个漩涡的几个手绘变体）：中心用第一张做 N 帧一个周期的流动，外圈在相邻两张之间
-    每 boil_steps 帧变形过去（boil_frames），总帧数 = lcm(张数 × boil_steps, N)。"""
+    每 boil_steps 帧变形过去（boil_frames），总帧数 = lcm(张数 × boil_steps, N)。
+    mirror_rim：外圈用左右镜像的变体，中心不变（AI 画的外圈浪头朝向和中心螺旋的转向相反时用）。"""
     import math
     if len(srcs) > 1 and not flow:
         raise ValueError("多张变体需要配合 --flow 使用（中心流动一个周期的帧数）")
+    if mirror_rim and len(srcs) < 2:
+        raise ValueError("--mirror-rim 只用于多张变体")
     tex_size = flow_size if flow else width
     pictures_n = math.lcm(len(srcs) * boil_steps, flow) if len(srcs) > 1 else flow
     if flow and period % pictures_n:
@@ -730,11 +735,18 @@ def make_spin_package(srcs: list[Image.Image], name: str, width: int, period: in
     info: dict = {}
     if len(srcs) > 1:
         circles = [load_circle(sv, 2 * tex_size, alpha_floor, keep_islands) for sv in srcs]  # 2 倍分辨率做变形
+        centre_img = circles[0]
+        if mirror_rim:
+            circles = [c.transpose(Image.FLIP_LEFT_RIGHT) for c in circles]
         circles, angles = align_variants(circles)
         order = order_variants(circles)
         circles = [circles[i] for i in order]
         info = {"order": order, "angles": angles}
-        pictures = boil_frames(circles, boil_steps, flow, flow_swirl, flow_drain)
+        if mirror_rim:
+            # 中心（不镜像）也绕圆心转到和外圈第一张轮廓最重合的角度，衔接处两边的白沫位置接近
+            (_, centre_img), (_, centre_angle) = align_variants([circles[0], centre_img])
+            info["centre_angle"] = centre_angle
+        pictures = boil_frames(circles, boil_steps, flow, flow_swirl, flow_drain, centre_img)
     else:
         circles = [load_circle(srcs[0], tex_size, alpha_floor, keep_islands)]
         pictures = flow_frames(circles[0], flow, flow_swirl, flow_drain) if flow else circles
@@ -793,7 +805,7 @@ def cmd_spin(args) -> int:
                                           args.pst, args.clockwise, args.alpha_floor, args.squash, args.level,
                                           keep_islands=args.keep_islands, flow=args.flow, flow_size=args.flow_size,
                                           flow_swirl=args.flow_swirl, flow_drain=args.flow_drain,
-                                          boil_steps=args.boil_steps)
+                                          boil_steps=args.boil_steps, mirror_rim=args.mirror_rim)
     except ValueError as e:
         print(f"[ERROR] {e}")
         return 1
@@ -811,6 +823,8 @@ def cmd_spin(args) -> int:
               f"每 {args.boil_steps} 帧变成下一张（{args.boil_steps / 30:.2f} 秒）")
         print(f"  播放顺序 {names}")
         print(f"  各变体为对齐外圈轮廓转过的角度（度）：{[round(a, 1) for a in meta['angles']]}")
+        if args.mirror_rim:
+            print(f"  外圈用左右镜像的变体；中心用第一张原图（为对齐外圈转了 {meta['centre_angle']:.0f} 度）")
     print(f"  正圆贴图 {meta['texture'][0]}x{meta['texture'][1]}，atlas {meta['atlas'][0]}x{meta['atlas'][1]}；"
           f"地面上看是 {args.width} x {round(args.width * args.squash)} 的椭圆，圆心在实体原点")
 
@@ -901,6 +915,8 @@ def main() -> int:
     p.add_argument("--keep-islands", action="store_true", help="保留和主体不相连的碎片（默认去掉）")
     p.add_argument("--flow", type=int, default=0,
                    help="中心流动一个周期的帧数（0 = 只整体旋转）；--period 必须是逐帧图总张数的整数倍")
+    p.add_argument("--mirror-rim", action="store_true",
+                   help="外圈用左右镜像的变体、中心不变：AI 画的外圈浪头朝向和中心螺旋的转向相反时用")
     p.add_argument("--boil-steps", type=int, default=10,
                    help="多张变体时，外圈从一张变形到下一张用多少帧（逐帧图总张数 = lcm(张数 × 它, --flow)）")
     p.add_argument("--flow-size", type=int, default=248, help="流动帧的贴图边长（像素），地面上的大小仍由 --width 决定")

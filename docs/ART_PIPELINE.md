@@ -228,7 +228,8 @@ python tools\art\png2tex.py art\icons\tide_altar.png
 python tools\art\make_anim.py spin art\source\tide_altar\tide_altar_swirl_v1_chatgpt.png ^
     art\source\tide_altar\tide_altar_swirl_v2_chatgpt.png art\source\tide_altar\tide_altar_swirl_v3_chatgpt.png ^
     art\source\tide_altar\tide_altar_swirl_v4_chatgpt.png art\source\tide_altar\tide_altar_swirl_v5_chatgpt.png ^
-    art\source\tide_altar\tide_altar_swirl_v6_chatgpt.png --name tide_altar_swirl --width 320 --period 180 --flow 30 --boil-steps 10
+    art\source\tide_altar\tide_altar_swirl_v6_chatgpt.png --name tide_altar_swirl --width 320 --period 180 --flow 30 --boil-steps 10 ^
+    --mirror-rim
 ```
 
 （上一版只用一张图：`spin art\source\tide_altar\tide_altar_warning_chatgpt.png ... --period 192 --flow 32`，同样的命令还能用。）
@@ -253,6 +254,10 @@ python tools\art\make_anim.py spin art\source\tide_altar\tide_altar_swirl_v1_cha
 * 对齐：每张变体绕圆心转到外圈轮廓和第一张最重合的角度（2° 一档，不镜像——镜像会把螺旋方向和光照一起反过来）；
   播放顺序穷举出外圈轮廓差别最小、首尾相接的一圈。两项结果都会打印出来
 * AI 画的变体最好构图一致（同样大小、同一个旋转方向、背景透明），只是外圈白沫不同
+* `--mirror-rim`：外圈用左右镜像的变体，中心仍用第一张原图（转到和外圈第一张轮廓最重合的角度再衔接）。
+  这套图要加：漩涡在游戏里逆时针转（中心快、外圈慢，渲染后实测），中心旋臂和这个方向一致（逆时针往里收），
+  但 AI 画的外圈浪头方向是反的——沿逆时针走，外轮廓 6 张里 5 张都是"慢慢鼓出、突然断崖"，看起来像被水流往后梳的尾巴，暗示顺时针（2026-10-11 反馈"外圈旋转方向的样子跟真实物理反了，内圈没问题"）。
+  镜像只翻外圈的手性（浪头、溅水、条纹倾角），运动方向不变。以后换图时先看这一点：外圈浪头的朝向要和中心螺旋的转向一致
 
 变形是怎么做的（`make_anim.py` 里 `_RimLayers` / `_rim_morph`，纯 numpy）：
 
