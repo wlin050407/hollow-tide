@@ -74,7 +74,7 @@ python tools\art\png2tex.py art\icons\tide_crystal.png
 `png2tex.py` 是我们自己的转换器（纯 Python，不需要安装 Mod Tools），格式已对照游戏自带贴图验证过：
 - 文件头字段、DXT5、完整 mipmap 链、预乘 alpha、**上下翻转存储**、UV 半像素内缩，都与原版 `inventoryimages*.tex` 一致
 - 验证方法：把原版火炬图标正过来、用本工具重新编码，得到的数据与原版存储的数据几乎逐像素一致（颜色误差 0.0、alpha 误差 0.4）；不翻转时误差很大
-- 唯一还没验证的是"在游戏里看"，第一次使用时按第 ⑧ 步确认
+- 已在游戏里验证（2026-10-11，潮蚀结晶在物品栏中显示正常）
 
 备用方案（如果游戏里显示不对）：Steam 工具 **Don't Starve Mod Tools** 的 autocompiler / `png.exe`，或社区工具 ktools 的 `ktech`
 （`ktech tide_crystal.png tide_crystal.tex`）。两者的默认行为与 `png2tex.py` 相同。
@@ -100,7 +100,7 @@ RegisterInventoryItemAtlas(GLOBAL.resolvefilepath("images/inventoryimages/tide_c
 
 注意 `resolvefilepath` 在找不到文件时会直接让游戏崩溃 —— 所以先跑 `check_mod.py` 确认文件都在。
 
-潮蚀结晶已按本步骤接入（2026-10-11）。
+潮蚀结晶已按本步骤接入（2026-10-11），游戏内显示正常。
 
 ## ⑧ 进游戏验证
 

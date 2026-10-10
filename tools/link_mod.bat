@@ -27,7 +27,10 @@ if errorlevel 1 goto :mklink_failed
 echo.
 echo [OK] Linked: "%TARGET%"
 echo      ---^> "%SRC%"
-goto :done
+echo      This window closes in 5 seconds.
+endlocal
+timeout /t 5 >nul
+exit /b 0
 
 :no_src
 echo [ERROR] Cannot find "%SRC%\modinfo.lua". Keep this script inside the repo's tools folder.

@@ -58,6 +58,7 @@
 | 物品栏格子 `Image:SetTexture` 会自己 resolve 路径；但也有直接使用原始路径的地方（如 `minisign.lua` 的 `OverrideSymbol`），所以注册时统一传 **`resolvefilepath` 之后**的路径最稳妥 | `widgets/itemtile.lua`、`widgets/image.lua`；`prefabs/minisign.lua` |
 | `RegisterInventoryItemAtlas(atlas, "name.tex")` 在 modmain 环境可用 | `modutil.lua` |
 | 配方图标：`Recipe:GetAtlas()` = `resolvefilepath(GetInventoryItemAtlas(image))` | `recipe.lua` |
+| `tools/art/png2tex.py` 生成的 64×64 DXT5 图标 + `RegisterInventoryItemAtlas(resolvefilepath(...))` 在游戏物品栏中显示正常 | 2026-10-11 用户游戏内实测 |
 | 原版物品栏图标每格 **64×64**（图集 2048×2048、DXT5、带 mipmap、UV 半像素内缩） | 实测 `images/inventoryimages1.tex/.xml` |
 | 原版贴图数据**上下翻转存储**、alpha **预乘**（原版图集 99.9% 的半透明像素满足 RGB ≤ A）；图集 UV 的 v 按存储行从上往下计 | 解码原版 `inventoryimages1/3.tex` 实测（火炬、帐篷、背包图标存储时都是倒着的） |
 | KTEX 文件头：`"KTEX"` + 32 位字：platform 4 位 / compression 5 位（DXT1=0, DXT3=1, DXT5=2, RGBA=4, RGB=5）/ type 4 位 / mipmap 数 5 位 / flags 2 位 / fill 12 位；之后每级 mipmap：`u16 宽, u16 高, u16 pitch, u32 数据长度` | ktools 源码 `ktex/specs.cpp`、`ktex.cpp` + 原版文件实测 |
@@ -99,6 +100,5 @@
 
 ## 尚未核实（使用前必须验证）
 
-- `tools/art/png2tex.py` 生成的贴图在游戏内的显示效果（数据层面已与原版逐像素对照一致，见 ART_PIPELINE.md ⑥）
 - Don't Starve Mod Tools / ktech（目前作为备用方案，未在本机使用）
 - Workshop 上传流程与大小限制（第 4 阶段再查）
