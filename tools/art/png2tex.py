@@ -77,6 +77,11 @@ def encode_dxt5(rgba: np.ndarray, encoder: BC3Encoder) -> tuple[bytes, int]:
 
 
 def write_ktex(levels: list[Image.Image], path: Path, encoder: BC3Encoder) -> None:
+    path.write_bytes(ktex_bytes(levels, encoder))
+
+
+def ktex_bytes(levels: list[Image.Image], encoder: BC3Encoder) -> bytes:
+    """物品栏图标和动画包 atlas-N.tex 用的是同一套 KTEX 约定（已对照原版 gems/flint 的 atlas 文件头）。"""
     descs, blobs = [], []
     for lvl in levels:
         rgba = np.flipud(premultiply(lvl))  # 存储时上下翻转
@@ -89,7 +94,7 @@ def write_ktex(levels: list[Image.Image], path: Path, encoder: BC3Encoder) -> No
             | (len(levels) << 13)
             | (FLAGS << 18)
             | (FILL << 20))
-    path.write_bytes(b"KTEX" + struct.pack("<I", word) + b"".join(descs) + b"".join(blobs))
+    return b"KTEX" + struct.pack("<I", word) + b"".join(descs) + b"".join(blobs)
 
 
 def write_atlas(xml_path: Path, tex_name: str, element: str, w: int, h: int) -> None:

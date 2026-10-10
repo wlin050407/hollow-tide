@@ -63,6 +63,19 @@
 | 原版贴图数据**上下翻转存储**、alpha **预乘**（原版图集 99.9% 的半透明像素满足 RGB ≤ A）；图集 UV 的 v 按存储行从上往下计 | 解码原版 `inventoryimages1/3.tex` 实测（火炬、帐篷、背包图标存储时都是倒着的） |
 | KTEX 文件头：`"KTEX"` + 32 位字：platform 4 位 / compression 5 位（DXT1=0, DXT3=1, DXT5=2, RGBA=4, RGB=5）/ type 4 位 / mipmap 数 5 位 / flags 2 位 / fill 12 位；之后每级 mipmap：`u16 宽, u16 高, u16 pitch, u32 数据长度` | ktools 源码 `ktex/specs.cpp`、`ktex.cpp` + 原版文件实测 |
 
+## 动画包（地面外观）
+
+| 事实 | 出处 |
+|---|---|
+| 地面外观的标准写法：prefab assets 里 `Asset("ANIM", "anim/<x>.zip")`；构造函数里 `inst.AnimState:SetBank(bank)`、`SetBuild(build)`、`PlayAnimation(anim)`（单帧不需要 loop） | `prefabs/flint.lua`（bank/build `flint`，anim `idle`） |
+| `SetBuild` 用的是 build.bin 里写的 build 名；`SetBank` 用的是 anim.bin 里每个动画记录的 bank（存的是 hash）；和 zip 文件名无关 | 原版 `moondial.zip`（bank `moondial`）+ `moondial_build.zip`（build `moondial_build`），`prefabs/moondial.lua` |
+| 动画找不到时游戏不会崩溃：实体**隐形**，日志里只有一行 `Could not find anim [...] in bank [...]` → bank / build / 动画名靠 `check_mod.py` 第 4 步核对 | 本项目早期玩家隐形时 `client_log.txt` 里的同一条日志（见 TESTING.md） |
+| `MakeInventoryFloatable` 不传 swap_bank 时，漂浮期间**继续播放当前动画**，只额外加前/后两个水花特效（`float_fx_front/back`，`idle_front_<size>`），位置 = 实体位置 + `vert_offset`，缩放 = scale | `components/floater.lua` `OnLandedClient`、`AttachEffect` |
+| 传了 swap_bank 的物品，离开水面时默认切回 bank = **prefab 名**、动画 `"idle"` → 我们的命名（bank = prefab 名，动画 `idle`）与之兼容 | `components/floater.lua` `SwitchToDefaultAnim` |
+| `AnimState:SetRayTestOnBB(true)`：鼠标拾取改用包围盒（默认按像素）。少数原版物品用（如 flint、moonrocknugget）；物品太细不好点时再考虑 | `prefabs/flint.lua` 等 60 个 prefab |
+| zip 格式：`build.bin` + `anim.bin` + `atlas-N.tex`，deflate 压缩；atlas 与物品栏图标同一套 KTEX 约定（DXT5、预乘 alpha、上下翻转、完整 mipmap），尺寸可以不是正方形（flint 是 512×256） | 原版 gems / flint / moondial / moondial_build 实测 |
+| build.bin v6、anim.bin v4 的完整字段布局；动画坐标 y 向下为正（建筑 ty 为负）；1 build 单位 = 1 贴图像素；矩形上沿对应较大的 v；同一帧多个元素时排在前面的显示在上层 | `tools/art/kanim.py` 顶部注释；`make_anim.py selftest` 对四个原版包读入再写出**逐字节相同**；原版宝石/燧石按此渲染方向正确 |
+
 ## 配方
 
 | 事实 | 出处 |
@@ -101,4 +114,6 @@
 ## 尚未核实（使用前必须验证）
 
 - Don't Starve Mod Tools / ktech（目前作为备用方案，未在本机使用）
+- anim.bin 里带**事件**（每帧 events 非空）的情况：格式按 ktools 的布局实现，但手头四个原版包都没有事件，未经往返验证
+- `make_anim.py` 生成的动画包：结构已通过往返和渲染校验，**游戏内显示待验证**（潮蚀结晶，2026-10-11）
 - Workshop 上传流程与大小限制（第 4 阶段再查）

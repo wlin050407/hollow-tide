@@ -129,12 +129,50 @@ RegisterInventoryItemAtlas(GLOBAL.resolvefilepath("images/inventoryimages/tide_c
 
 ---
 
-## 之后：动画资产（第 2 周开始）
+## 地面外观（单帧动画包）
 
-DST 的动画是 Spriter 骨骼/切片动画：一个 **build**（贴图部件，称为 symbol）+ 一个 **bank**（动画数据），
-Mod Tools 把 `exported/<名字>/<名字>.scml` 编译成 `anim/<名字>.zip`。这意味着：
+物品掉在地上、建筑摆在世界里，显示的都是**动画包** `anim/<名字>.zip`，不是物品栏图标。
+最简单的地面外观就是"一张图 = 一个单帧动画"，我们用自己的脚本生成，不需要 Spriter 和 Mod Tools：
 
-- AI 擅长：同一风格下的**部件草图**（结晶的底座、发光核心、碎片）、特效序列的参考
-- AI 不擅长：多帧之间保持一致、多朝向一致、正确的部件拆分和枢轴点 —— 这些需要人在 Spriter 里完成
-- 第一阶段只做"刚体部件 + 变换动画"（位移/旋转/缩放/透明度），不做逐帧手绘动画
-- 第 2 周的验收门槛：一个原创的、有 ≥3 个状态（idle / 激活 / 受击）的祭坛动画在游戏里正常播放
+```bat
+python tools\art\make_anim.py item art\source\tide_crystal\tide_crystal_v1_chatgpt.png --name tide_crystal --height 150 --pivot 0.5,0.75 ^
+    --compare "<DST安装目录>\data\anim\gems.zip:bluegem_idle" --compare "<DST安装目录>\data\anim\flint.zip:idle"
+```
+
+- 输出 `mod\anim\tide_crystal.zip`：bank = build = symbol = `tide_crystal`，一个单帧动画 `idle`
+- 输出 `art\review\tide_crystal_ground_preview.png`：和原版宝石、燧石**按同样比例**并排，红十字是实体原点，横线是地面
+- `--height`：游戏里的高度（build 像素）。原版参考：蓝宝石 152×126，燧石堆 223×119
+- `--pivot`：实体原点落在图上的位置（比例）。掉落物 0.5,0.5（宝石）~ 0.5,0.71（燧石堆）；建筑一般在底边附近
+- 源图直接用 `art/source/` 里的原图（脚本自己裁边、缩放），同样的输入得到逐字节相同的 zip
+- 脚本会把生成的 zip 读回来渲染一遍，和输入图比较误差
+
+prefab 里这样用（`scripts/prefabs/tide_crystal.lua`）：
+
+```lua
+local assets = { Asset("ANIM", "anim/tide_crystal.zip") }
+...
+inst.AnimState:SetBank("tide_crystal")
+inst.AnimState:SetBuild("tide_crystal")
+inst.AnimState:PlayAnimation("idle")
+```
+
+`check_mod.py` 第 5 步会解析 `mod/anim/*.zip` 的结构，第 4 步会核对 prefab 里写的 bank / build / 动画名在包里真的存在
+（写错名字在游戏里的表现是"物品隐形"，不会报错，所以要在这里拦住）。
+
+**格式是怎么确认的**：`tools/art/kanim.py` 按游戏自带的 gems / flint / moondial / moondial_build 四个包实测格式；
+`make_anim.py selftest <原版zip>` 把原版包读入再写出，四个包的 build.bin / anim.bin 都**逐字节相同**；
+再用同一套坐标约定把原版宝石和燧石渲染出来，方向、拼接、图层顺序都正确。
+格式细节（y 轴向下为正、贴图上下翻转存储、1 build 单位 = 1 贴图像素）写在 `kanim.py` 顶部。
+
+潮蚀结晶的地面外观已按此生成（2026-10-11），**待进游戏验证**：地上的样子、和原版物品的大小对比、鼠标悬停、漂浮在水上。
+
+## 之后：多部件 / 多帧动画（祭坛等建筑）
+
+`kanim.py` 的读写是通用的（多 symbol、多帧、多张贴图都能读写），但 `make_anim.py` 目前只会生成单帧单部件。
+祭坛需要 idle / 激活 / 受击等多个状态时，有两条路，到时候按需要选：
+
+1. **扩展 make_anim.py**：每个状态一组 PNG 帧（逐帧图），脚本把它们打包成多帧动画。适合 AI 出图 + 少量帧的简单动画
+2. **Spriter + Don't Starve Mod Tools**：部件拆分 + 骨骼变换（位移/旋转/缩放），Mod Tools 的 autocompiler 把
+   `exported/<名字>/<名字>.scml` 编译成 zip。适合需要平滑运动的动画；生成的 zip 也能用 `check_mod.py` 检查
+
+无论哪条路：AI 擅长出同一风格的**部件草图和单帧图**；多帧之间保持一致、部件拆分、枢轴点需要人来把关。

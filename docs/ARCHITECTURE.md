@@ -20,8 +20,8 @@ hollow-tide/                       Git 仓库根目录
 │  │  ├─ prefabs/                  实体定义（游戏按 PrefabFiles 载入）
 │  │  └─ components/               （需要时）自定义组件，文件名加 ht_ 前缀
 │  ├─ images/                      编译后的贴图 .tex/.xml（由 tools/art/png2tex.py 生成）
-│  ├─ anim/                        编译后的动画 .zip
-│  └─ exported/                    （第 2 周）Spriter 源工程，Mod Tools 从这里编译到 anim/
+│  ├─ anim/                        动画包 .zip（地面外观等；由 tools/art/make_anim.py 生成）
+│  └─ exported/                    （需要时）Spriter 源工程，Mod Tools 从这里编译到 anim/
 ├─ art/
 │  ├─ STYLE.md                     （第 1 周）视觉风格基准
 │  ├─ prompts/                     每个资产的 prompt 与生成记录
@@ -34,7 +34,9 @@ hollow-tide/                       Git 仓库根目录
 │  ├─ check_mod.py                 静态检查（语法 / modinfo / 字符串 / 资源 / API 核对）
 │  ├─ link_mod.bat                 把 mod/ 挂进游戏
 │  ├─ art/prepare_icon.py          AI 图 → 64×64 图标 + 预览
-│  └─ art/png2tex.py               PNG → DST 贴图 .tex + 图集 .xml（格式已对照原版验证）
+│  ├─ art/png2tex.py               PNG → DST 贴图 .tex + 图集 .xml（格式已对照原版验证）
+│  ├─ art/make_anim.py             PNG → 动画包 anim/*.zip（地面外观）+ 预览 + 原版格式自检
+│  └─ art/kanim.py                 动画包 build.bin / anim.bin 读写库（make_anim 与 check_mod 共用）
 ├─ docs/                           设计与流程文档
 ├─ AGENTS.md / CLAUDE.md           AI 编程助手必须遵守的规则
 └─ .github/                        CI（每次 push 自动跑 check_mod.py）+ PR 模板

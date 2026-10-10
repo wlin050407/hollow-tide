@@ -2,7 +2,8 @@
 --
 -- 潮蚀结晶（Tide Crystal）
 -- 物品栏图标：原创（images/inventoryimages/tide_crystal.tex，在 modmain.lua 注册图集）。
--- 地面外观：暂时借用原版宝石动画（anim/gems.zip）并染成青绿色，之后再做原创地面动画。
+-- 地面外观：原创动画包 anim/tide_crystal.zip（tools/art/make_anim.py 生成，见 docs/ART_PIPELINE.md）。
+--   bank = build = "tide_crystal"，只有一个单帧动画 "idle"。
 --
 -- 结构遵循原版 prefab 的标准写法（参考原版 prefabs/gem.lua）：
 --   1) 两端共有部分：Transform / AnimState / Network / 物理 / 标签
@@ -14,7 +15,7 @@ local T = require("hollowtide/tuning")
 
 local assets =
 {
-    Asset("ANIM", "anim/gems.zip"), -- 原版资源，仅作占位
+    Asset("ANIM", "anim/tide_crystal.zip"),
 }
 
 local function fn()
@@ -27,14 +28,13 @@ local function fn()
 
     MakeInventoryPhysics(inst)
 
-    inst.AnimState:SetBank("gems")
-    inst.AnimState:SetBuild("gems")
-    inst.AnimState:PlayAnimation("bluegem_idle", true)
-    -- 占位染色：偏青绿的"潮水"色，和原版蓝宝石区分开
-    inst.AnimState:SetMultColour(0.55, 1, 0.9, 1)
+    inst.AnimState:SetBank("tide_crystal")
+    inst.AnimState:SetBuild("tide_crystal")
+    inst.AnimState:PlayAnimation("idle")
 
     inst.pickupsound = "gem"
 
+    -- 参数沿用原版宝石（prefabs/gem.lua）；漂浮时水花特效的位置/大小需要进游戏看一眼
     MakeInventoryFloatable(inst, "small", 0.10, 0.80)
 
     inst.entity:SetPristine()

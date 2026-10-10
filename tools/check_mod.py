@@ -11,6 +11,8 @@ Hollow Tide 静态检查（本地和 CI 都能跑，不需要启动游戏）
   4. prefab 文件：在桩环境里分别以服务器端、客户端身份调用一次构造函数（冒烟测试），
      检查 Mod 自带资源文件是否存在、每个 prefab 是否有中英文名字
   5. 贴图：mod/images 下的图集 .xml -> 引用的 .tex 是否存在、KTEX 文件头是否合法、尺寸是否合理
+     动画包：mod/anim/*.zip 的 build.bin / anim.bin 能否完整解析、atlas 贴图是否齐全、UV 是否越界；
+     prefab 里 SetBank / SetBuild / PlayAnimation 用到的名字是否真的在 Mod 自己的动画包里
   6. API 核对（需要游戏脚本，见下）：桩环境执行过程中用到的
        - 全局函数/变量          是否在原版脚本中存在
        - TUNING.XXX              是否在原版 tuning 中存在
@@ -43,6 +45,9 @@ import sys
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "art"))
+import kanim  # noqa: E402  动画包格式读写（只用标准库）
 
 try:
     from lupa import lua51
@@ -91,6 +96,9 @@ harness.components = {}     -- AddComponent 的参数
 harness.requires = {}       -- require 了哪些游戏自带模块（如 "prefabutil"）
 harness.simpostinit = {}
 harness.prefabpostinit = {}
+harness.animrefs = {}       -- AnimState:SetBank / SetBuild / PlayAnimation / PushAnimation 的字符串参数
+
+local ANIM_METHODS = { SetBank = true, SetBuild = true, PlayAnimation = true, PushAnimation = true }
 
 -- "什么都接受"的假对象：读任何字段都返回新的假对象并缓存；可以被调用；可以被赋值。
 local function make_stub(name)
@@ -107,6 +115,10 @@ local function make_stub(name)
             harness.calls[name] = true
             if string.sub(name, -13) == ".AddComponent" and type(a2) == "string" then
                 harness.components[a2] = true
+            end
+            local method = string.match(name, "%.AnimState%.(%a+)$")
+            if method ~= nil and ANIM_METHODS[method] and type(a2) == "string" then
+                table.insert(harness.animrefs, { method = method, value = a2 })
             end
             return make_stub(name .. "()")
         end,
@@ -206,6 +218,10 @@ function harness.run_in_env(src, chunkname, env)
     return good, e
 end
 
+function harness.clear_animrefs()
+    harness.animrefs = {}
+end
+
 function harness.pcall1(fn, arg)
     local good, e = pcall(fn, arg)
     return good, e
@@ -222,6 +238,7 @@ function harness.reset()
     harness.prefabs = {}
     harness.simpostinit = {}
     harness.prefabpostinit = {}
+    harness.animrefs = {}
     for k in pairs(package.loaded) do
         if type(k) == "string" and string.find(k, "^hollowtide/") then package.loaded[k] = nil end
     end
@@ -515,11 +532,15 @@ def check_modmain_and_prefabs(lua, harness, mod: Path, sources: dict[Path, str],
         for p in prefabs:
             name = p["name"]
             found["prefabs"].append(name)
+            harness.clear_animrefs()
             for side, mastersim in (("server", True), ("client", False)):
                 harness.set_side(genv, mastersim)
                 good, err = harness.pcall1(p["fn"], None)
                 if not good:
                     error(f"prefab {name}: 构造函数在 {side} 端执行出错 -> {err}")
+            # 服务器端和客户端各执行一次，调用序列相同：去重但保持顺序（SetBank 要在 PlayAnimation 之前）
+            refs = list(dict.fromkeys((r["method"], r["value"]) for r in lua_list(harness.animrefs)))
+            check_anim_refs(mod, name, refs, [a["file"] for a in lua_list(p["assets"]) if a["type"] == "ANIM"])
             for a in lua_list(p["assets"]):
                 file = a["file"]
                 if (mod / file).exists():
@@ -546,7 +567,10 @@ KTEX_COMPRESSION = {0: "DXT1", 1: "DXT3", 2: "DXT5", 4: "RGBA", 5: "RGB"}
 
 
 def read_ktex(path: Path) -> dict:
-    data = path.read_bytes()
+    return read_ktex_bytes(path.read_bytes())
+
+
+def read_ktex_bytes(data: bytes) -> dict:
     if len(data) < 8 or data[:4] != b"KTEX":
         raise ValueError("不是 KTEX 文件（缺少 'KTEX' 文件头）")
     word = struct.unpack("<I", data[4:8])[0]
@@ -571,13 +595,12 @@ def read_ktex(path: Path) -> dict:
 
 
 def check_textures(mod: Path) -> None:
-    print("\n[5] 贴图与图集")
+    print("\n[5] 贴图、图集与动画包")
     images = mod / "images"
     xmls = sorted(images.rglob("*.xml")) if images.exists() else []
     pngs = sorted(images.rglob("*.png")) if images.exists() else []
     if not xmls and not pngs:
         info("mod/images 下还没有贴图（使用原版占位图标阶段）")
-        return
     for x in xmls:
         rel = x.relative_to(mod).as_posix()
         try:
@@ -617,6 +640,128 @@ def check_textures(mod: Path) -> None:
     for p in pngs:
         if not p.with_suffix(".tex").exists():
             warn(f"{p.relative_to(mod).as_posix()}: 还没有对应的 .tex（需要用 Mod Tools 或 ktech 转换）")
+    check_anim_zips(mod)
+
+
+# ---------------------------------------------------------------------------
+# 动画包（mod/anim/*.zip）
+# ---------------------------------------------------------------------------
+
+_anim_cache: dict[Path, dict] = {}
+
+
+def load_anim_zip(path: Path) -> dict:
+    """解析一个动画包，结果缓存。返回 {"build", "anim", "atlases", "error"}。"""
+    if path in _anim_cache:
+        return _anim_cache[path]
+    out = {"build": None, "anim": None, "atlases": {}, "error": None}
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = set(z.namelist())
+            if "build.bin" not in names and "anim.bin" not in names:
+                raise kanim.FormatError("zip 里既没有 build.bin 也没有 anim.bin")
+            if "build.bin" in names:
+                out["build"] = kanim.read_build(z.read("build.bin"))
+                for a in out["build"].atlases:
+                    out["atlases"][a] = z.read(a) if a in names else None
+            if "anim.bin" in names:
+                out["anim"] = kanim.read_anim(z.read("anim.bin"))
+    except (zipfile.BadZipFile, kanim.FormatError, OSError) as e:
+        out["error"] = str(e)
+    _anim_cache[path] = out
+    return out
+
+
+def mod_anim_zips(mod: Path) -> list[Path]:
+    d = mod / "anim"
+    return sorted(d.glob("*.zip")) if d.exists() else []
+
+
+def check_anim_zips(mod: Path) -> None:
+    for path in mod_anim_zips(mod):
+        rel = path.relative_to(mod).as_posix()
+        z = load_anim_zip(path)
+        if z["error"]:
+            error(f"{rel}: 无法解析 -> {z['error']}")
+            continue
+        build, anim = z["build"], z["anim"]
+        problems_before = len(errors)
+        parts = []
+        if build is not None:
+            for atlas, data in z["atlases"].items():
+                if data is None:
+                    error(f"{rel}: build 引用的贴图 {atlas} 不在 zip 里")
+                    continue
+                try:
+                    tinfo = read_ktex_bytes(data)
+                except ValueError as e:
+                    error(f"{rel}/{atlas}: {e}")
+                    continue
+                parts.append(f"{atlas} {tinfo['width']}x{tinfo['height']} "
+                             f"{KTEX_COMPRESSION.get(tinfo['compression'], '?')} mipmaps={tinfo['mipmaps']}")
+            for sym in build.symbols:
+                symname = build.names.get(sym.hash)
+                if symname is None:
+                    error(f"{rel}: symbol hash {sym.hash:#x} 在名字表里找不到")
+                elif kanim.strhash(symname) != sym.hash:
+                    error(f"{rel}: symbol {symname!r} 的 hash 与名字不符")
+                for f in sym.frames:
+                    for x, y, _z, u, v, w in f.verts:
+                        if not (-1e-4 <= u <= 1 + 1e-4 and -1e-4 <= v <= 1 + 1e-4):
+                            error(f"{rel}: symbol {symname} 第 {f.framenum} 帧的 UV ({u:.4f}, {v:.4f}) 越界")
+                            break
+                        if int(w) >= len(build.atlases):
+                            error(f"{rel}: symbol {symname} 引用了第 {int(w)} 张贴图，但 build 只有 {len(build.atlases)} 张")
+                            break
+            hashes = [s.hash for s in build.symbols]
+            if hashes != sorted(hashes):
+                error(f"{rel}: build 里的 symbol 没有按 hash 升序排列（原版都是升序，游戏可能按此查找）")
+            parts.insert(0, f"build {build.name!r}（{len(build.symbols)} 个 symbol）")
+        if anim is not None:
+            build_syms = {s.hash for s in build.symbols} if build is not None else None
+            for a in anim.anims:
+                if a.bank not in anim.names:
+                    error(f"{rel}: 动画 {a.name!r} 的 bank hash 在名字表里找不到")
+                if build_syms is not None:
+                    missing = {e.symbol for f in a.frames for e in f.elements} - build_syms
+                    for h in sorted(missing):
+                        warn(f"{rel}: 动画 {a.name!r} 用到的 symbol {anim.names.get(h, hex(h))!r} 不在同一个包的 build 里"
+                             f"（如果是故意引用别的 build 可以忽略）")
+            banks = sorted({anim.names.get(a.bank, hex(a.bank)) for a in anim.anims})
+            parts.append(f"bank {banks} 动画 {[a.name for a in anim.anims][:8]}")
+        if len(errors) == problems_before:
+            ok(f"{rel}: " + "；".join(parts))
+
+
+def check_anim_refs(mod: Path, prefab: str, refs: list[tuple[str, str]], anim_assets: list[str]) -> None:
+    """prefab 构造函数里写死的 bank / build / 动画名，是否能在 Mod 自己的动画包里找到。"""
+    if not refs:
+        return
+    own_assets = [a for a in anim_assets if (mod / a).exists()]
+    vanilla_assets = [a for a in anim_assets if not (mod / a).exists()]
+    builds, banks = set(), {}
+    for path in [mod / a for a in own_assets]:
+        z = load_anim_zip(path)
+        if z["error"]:
+            return  # 包本身坏了，第 5 步会报错；这里不再重复报一串找不到
+        if z["build"] is not None:
+            builds.add(z["build"].name.lower())
+        if z["anim"] is not None:
+            for a in z["anim"].anims:
+                banks.setdefault(a.bank, set()).add(a.name)
+    # 只有当这个 prefab 的 ANIM 资源全部来自 Mod 时，找不到才算错误；否则可能是原版资源（只能进游戏验证）
+    strict = bool(own_assets) and not vanilla_assets
+    report = error if strict else info
+    bank = None
+    for method, value in refs:
+        if method == "SetBuild" and value.lower() not in builds:
+            report(f"prefab {prefab}: SetBuild({value!r}) 在 Mod 的动画包 {own_assets} 里找不到这个 build")
+        elif method == "SetBank":
+            bank = kanim.strhash(value)
+            if bank not in banks:
+                report(f"prefab {prefab}: SetBank({value!r}) 在 Mod 的动画包 {own_assets} 里找不到这个 bank")
+        elif method in ("PlayAnimation", "PushAnimation") and bank in banks and value not in banks[bank]:
+            error(f"prefab {prefab}: {method}({value!r}) —— bank 里只有动画 {sorted(banks[bank])}")
 
 
 # ---------------------------------------------------------------------------

@@ -62,16 +62,18 @@ setx DST_SCRIPTS "D:\Applications\Steam\steamapps\common\Don't Starve Together\d
 
 | # | 操作 | 期望 |
 |---|---|---|
-| 1 | `c_spawn("tide_crystal")` | 鼠标位置出现一颗**偏青绿色**的宝石 |
+| 1 | `c_spawn("tide_crystal")` | 鼠标位置出现**原创的潮蚀结晶**（青绿色晶簇，底下有石块和水草）；不是原版宝石 |
+| 1a | 旁边 `c_spawn("bluegem")`、`c_spawn("flint")` 对比 | 大小和原版掉落物相当；结晶边缘没有白边/黑边；底座大致落在物品的位置上（不悬空、不陷进地里太多） |
+| 1b | 走到海边，鼠标指向海面 `c_spawn("tide_crystal")` | 结晶浮在水面上，有一圈水花特效；不消失、不沉底 |
 | 2 | 鼠标悬停 | 显示"潮蚀结晶"（英文环境显示 Tide Crystal） |
-| 3 | 捡起 | 进入物品栏；图标暂时是原版蓝宝石图标（占位，正常） |
+| 3 | 捡起；再从物品栏丢到地上 | 进入物品栏，图标是原创的潮蚀结晶图标；丢下后地面外观同第 1 步 |
 | 4 | **右键**点物品栏里的结晶（鼠标悬停时提示"检查/Examine"） | 角色说"贴近耳边，能听见很远很远的潮声。"（台词由服务器生成：服务器语言是英文时说 "It hums like a shell held to the ear."，属正常） |
 | 5 | `c_give("tide_crystal", 45)` | 分成 40 + 5 两堆（堆叠上限 40） |
 | 6 | `c_save()`，等存档完成后 `c_reset()`（或：断开连接 → 完全退出游戏 → 重开读档） | 读档后物品还在，数量不变 |
 | 7 | 走下洞穴，再 `c_spawn("tide_crystal")` | 洞穴里同样正常（`caves_server_log.txt` 无报错） |
 | 8 | 队友加入你的世界（需要也装了这个 Mod 的本地副本） | 队友看到同样的名字和外观；`master_server_log.txt` 出现 `player joined: <队友>` |
 
-✅ **M1 完成标准**：1–7 全部通过；8 在第 2 天队友到位后补测。
+✅ **M1 完成标准**：1–7 全部通过，`client_log.txt` 里没有 `Could not find anim` 之类和动画有关的报错；8 在第 2 天队友到位后补测。
 
 ## 4. 出错了怎么办
 
