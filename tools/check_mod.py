@@ -332,6 +332,9 @@ class GameIndex:
             if m:
                 self.components[m.group(1)] = set(re_comp_method.findall(src))
 
+        # fx.lua 里的特效表由 prefabs/fx.lua 批量生成 prefab（如 mining_moonglass_fx），名字不在 Prefab("...") 里
+        self.prefabs.update(re.findall(r'^\s*name\s*=\s*"(\w+)"', files.get("scripts/fx.lua", ""), re.M))
+
         tuning_src = files.get("scripts/tuning.lua", "")
         self.tuning.update(re.findall(r"^\s+([A-Z][A-Z0-9_]*)\s*=", tuning_src, re.M))
 
@@ -470,7 +473,7 @@ def run_postinits(harness, genv, label: str) -> None:
 
 def check_modmain_and_prefabs(lua, harness, mod: Path, sources: dict[Path, str], modinfo) -> dict:
     print("\n[3] modmain.lua（桩环境，language = en / zh / auto）")
-    found = {"prefabs": [], "postinit_targets": []}
+    found = {"prefabs": [], "postinit_targets": [], "deps": {}}
     modmain = mod / "modmain.lua"
     if modmain not in sources:
         error("缺少 modmain.lua")
@@ -532,6 +535,7 @@ def check_modmain_and_prefabs(lua, harness, mod: Path, sources: dict[Path, str],
         for p in prefabs:
             name = p["name"]
             found["prefabs"].append(name)
+            found["deps"][name] = [str(d) for d in lua_list(p["deps"])]
             harness.clear_animrefs()
             for side, mastersim in (("server", True), ("client", False)):
                 harness.set_side(genv, mastersim)
@@ -834,6 +838,11 @@ def check_api(harness, mod: Path, game: GameIndex | None, found: dict) -> None:
         m = re.search(r"\.(\w+)$", path)
         if m and m.group(1) not in game.methods:
             warn(f"方法 {m.group(1)}() 在原版脚本里从未出现过：{path}（引擎方法也可能如此，请人工确认）")
+
+    for name, deps in found.get("deps", {}).items():
+        for dep in deps:
+            if dep not in game.prefabs and dep not in own_prefabs:
+                error(f"prefab {name} 的依赖 {dep!r} 在原版和本 Mod 里都找不到（拼写错误？）")
 
     for target in found.get("postinit_targets", []):
         if target not in game.prefabs and target not in own_prefabs:

@@ -3,7 +3,7 @@
 把一张 AI 生成（或手绘）的物品图整理成 DST 物品栏图标用的 64x64 透明 PNG，并生成审查预览图。
 
 做的事情（全部可重复、可脚本化）：
-  1. 读入图片；如果没有透明通道，可用 --key-color 抠掉纯色背景（auto = 取四个角的颜色）
+  1. 读入图片；如果没有透明通道，可用 --key-color 抠掉纯色背景（算法在 remove_bg.py；推荐先单独运行它）
   2. 去掉几乎透明的"雾边"（alpha < --alpha-floor）
   3. 按不透明区域裁切，等比缩放到 (size - 2*padding)，居中放到透明画布上
      缩放在"预乘 alpha"空间里做，避免透明边缘出现白边/黑边
@@ -27,40 +27,15 @@ import sys
 from pathlib import Path
 
 try:
-    from PIL import Image, ImageChops, ImageDraw, ImageFilter
+    from PIL import Image, ImageDraw, ImageFilter
 except ImportError:  # pragma: no cover
     print("缺少依赖 Pillow：请先运行  pip install -r tools/requirements.txt")
     sys.exit(2)
 
 REPO = Path(__file__).resolve().parents[2]
 
-
-def parse_color(text: str) -> tuple[int, int, int]:
-    text = text.lstrip("#")
-    if len(text) != 6:
-        raise argparse.ArgumentTypeError("颜色格式应为 #RRGGBB")
-    return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
-
-
-def key_out(img: Image.Image, key: tuple[int, int, int], tolerance: int, softness: int) -> Image.Image:
-    """把接近 key 颜色的像素变透明（简单色键）。复杂背景请先用专门的去背景工具。"""
-    rgb = img.convert("RGB")
-    key_img = Image.new("RGB", img.size, key)
-    diff = ImageChops.difference(rgb, key_img).convert("L")  # 近似的颜色距离
-    lo, hi = tolerance, tolerance + max(1, softness)
-    mask = diff.point(lambda d: 0 if d <= lo else (255 if d >= hi else int((d - lo) * 255 / (hi - lo))))
-    out = img.convert("RGBA")
-    alpha = ImageChops.multiply(out.getchannel("A"), mask)
-    out.putalpha(alpha)
-    return out
-
-
-def corner_color(img: Image.Image) -> tuple[int, int, int]:
-    rgb = img.convert("RGB")
-    w, h = rgb.size
-    pts = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
-    cols = [rgb.getpixel(p) for p in pts]
-    return tuple(sorted(c[i] for c in cols)[1] for i in range(3))  # type: ignore[return-value]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from remove_bg import auto_key, key_out, parse_color  # noqa: E402  去背景（带边缘去色溢出）统一用 remove_bg.py
 
 
 def fit_to_canvas(img: Image.Image, size: int, padding: int) -> Image.Image:
@@ -153,9 +128,10 @@ def main() -> int:
     ap.add_argument("--size", type=int, default=64, help="输出边长，原版物品栏格子为 64")
     ap.add_argument("--padding", type=int, default=3, help="四周留白像素")
     ap.add_argument("--key-color", default=None,
-                    help="源图没有透明通道时抠掉的纯色背景：#RRGGBB 或 auto（取四角颜色）")
-    ap.add_argument("--tolerance", type=int, default=24, help="色键容差 (0-255)")
-    ap.add_argument("--softness", type=int, default=24, help="色键边缘过渡宽度")
+                    help="源图没有透明通道时抠掉的纯色背景：#RRGGBB 或 auto（取图片最外一圈的颜色）。"
+                         "推荐先用 remove_bg.py 单独去背景，检查过再用")
+    ap.add_argument("--tolerance", type=int, default=48, help="色键容差 (0-255)，见 remove_bg.py")
+    ap.add_argument("--band", type=int, default=3, help="对背景外侧多少像素做反混合，见 remove_bg.py")
     ap.add_argument("--alpha-floor", type=int, default=12, help="低于此 alpha 的像素视为完全透明")
     ap.add_argument("--outline", type=int, default=0, help="描边宽度（最终像素，0 = 不加）")
     ap.add_argument("--outline-color", type=parse_color, default=(20, 16, 14), help="描边颜色 #RRGGBB")
@@ -168,9 +144,10 @@ def main() -> int:
     has_alpha = img.getchannel("A").getextrema()[0] < 255
 
     if args.key_color:
-        key = corner_color(img) if args.key_color == "auto" else parse_color(args.key_color)
+        import numpy as np
+        key = auto_key(np.asarray(img)[..., :3]) if args.key_color == "auto" else parse_color(args.key_color)
         print(f"色键去背景：{'#%02x%02x%02x' % key}")
-        img = key_out(img, key, args.tolerance, args.softness)
+        img = key_out(img, key, args.tolerance, args.band)
     elif not has_alpha:
         print("[WARN] 源图没有透明区域。请先去背景，或加 --key-color auto")
 

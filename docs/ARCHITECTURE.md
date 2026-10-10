@@ -33,6 +33,7 @@ hollow-tide/                       Git 仓库根目录
 ├─ tools/
 │  ├─ check_mod.py                 静态检查（语法 / modinfo / 字符串 / 资源 / API 核对）
 │  ├─ link_mod.bat                 把 mod/ 挂进游戏
+│  ├─ art/remove_bg.py             去纯色背景（边缘去色溢出）→ 透明 PNG
 │  ├─ art/prepare_icon.py          AI 图 → 64×64 图标 + 预览
 │  ├─ art/png2tex.py               PNG → DST 贴图 .tex + 图集 .xml（格式已对照原版验证）
 │  ├─ art/make_anim.py             PNG → 动画包 anim/*.zip（地面外观）+ 预览 + 原版格式自检

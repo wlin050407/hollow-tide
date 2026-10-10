@@ -62,8 +62,8 @@ setx DST_SCRIPTS "D:\Applications\Steam\steamapps\common\Don't Starve Together\d
 
 | # | 操作 | 期望 |
 |---|---|---|
-| 1 | `c_spawn("tide_crystal")` | 鼠标位置出现**原创的潮蚀结晶**（青绿色晶簇，底下有石块和水草）；不是原版宝石 |
-| 1a | 旁边 `c_spawn("bluegem")`、`c_spawn("flint")` 对比 | 大小和原版掉落物相当；结晶边缘没有白边/黑边；底座大致落在物品的位置上（不悬空、不陷进地里太多） |
+| 1 | `c_spawn("tide_crystal")` | 鼠标位置出现**原创的潮蚀结晶**（一块斜着的青绿色结晶，根部有两个藤壶）；不是原版宝石 |
+| 1a | 旁边 `c_spawn("bluegem")`、`c_spawn("flint")` 对比 | 大小和原版掉落物相当；结晶边缘没有白边/黑边/紫边；不悬空、不陷进地里太多。颜色会被季节滤镜改变（秋天偏绿，见「出错了怎么办」），旁边的原版蓝宝石也会一起变色 |
 | 1b | 走到海边，鼠标指向海面 `c_spawn("tide_crystal")` | 结晶浮在水面上，有一圈水花特效；不消失、不沉底 |
 | 2 | 鼠标悬停 | 显示"潮蚀结晶"（英文环境显示 Tide Crystal） |
 | 3 | 捡起；再从物品栏丢到地上 | 进入物品栏，图标是原创的潮蚀结晶图标；丢下后地面外观同第 1 步 |
@@ -74,6 +74,18 @@ setx DST_SCRIPTS "D:\Applications\Steam\steamapps\common\Don't Starve Together\d
 | 8 | 队友加入你的世界（需要也装了这个 Mod 的本地副本） | 队友看到同样的名字和外观；`master_server_log.txt` 出现 `player joined: <队友>` |
 
 ✅ **M1 完成标准**：1–7 全部通过，`client_log.txt` 里没有 `Could not find anim` 之类和动画有关的报错；8 在第 2 天队友到位后补测。
+
+### 潮蚀晶簇（可开采，设计见 `docs/TIDE_CRYSTAL_CLUSTER_DESIGN.md`）
+
+| # | 操作 | 期望 |
+|---|---|---|
+| C1 | `c_spawn("tide_crystal_cluster")` | 出现一簇长在石块上的青绿色晶体，约有原版巨石一半大；角色走过去会被挡住 |
+| C2 | 鼠标悬停 | 显示"潮蚀晶簇"（Tide Crystal Cluster）；没拿镐时没有"开采"选项 |
+| C3 | `c_give("pickaxe")`，装备镐后点晶簇 | 出现"开采/Mine"，每一镐有晶体碎屑特效和玻璃声（和挖月岛玻璃一样） |
+| C4 | 一直挖 | 第 6 下晶簇碎掉（碎玻璃 + 烟尘），然后消失；地上掉 2 或 3 个潮蚀结晶，能捡起、能和已有的结晶堆叠 |
+| C5 | 再生成一个，挖 3 下，`c_save()` 后 `c_reset()` | 读档后晶簇还在，再挖 3 下就碎（挖过的次数被保存） |
+| C6 | 检查晶簇（方法同检查世界里的其他物体） | 台词"潮水退去后留下的，还在嗡嗡作响。" |
+| C7 | 洞穴里 `c_spawn("tide_crystal_cluster")` 并挖掉 | 和地面上一样（`caves_server_log.txt` 无报错） |
 
 ## 4. 出错了怎么办
 
@@ -92,6 +104,9 @@ setx DST_SCRIPTS "D:\Applications\Steam\steamapps\common\Don't Starve Together\d
      结论：测试前最好重启一次游戏。
    - 重开游戏后按 ` 打不开控制台（Esc 正常）。可能是输入法处于中文状态，先切到英文输入法再试；不行就重启游戏。
    - 不要在游戏运行时再次双击启动游戏：第二个进程会立刻退出，但会把 `client_log.txt` 截断，导致前面的日志丢失。
+   - **地上的东西和物品栏图标颜色不一样**：正常。游戏按季节和昼夜给整个世界套颜色滤镜（`components/colourcube.lua`，
+     秋天白天是 `day05_cc`），物品栏界面不受影响。秋天白天青色会偏绿，原版蓝宝石会变得接近灰色。
+     判断是不是我们的贴图有问题：在旁边放一个原版物品一起看，或者换季节/时间再看。
 
 ## 5. 联机测试矩阵（第 7 天用）
 

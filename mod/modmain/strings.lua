@@ -28,10 +28,12 @@ local TEXT =
         NAMES =
         {
             TIDE_CRYSTAL = "Tide Crystal",
+            TIDE_CRYSTAL_CLUSTER = "Tide Crystal Cluster",
         },
         DESCRIBE =
         {
             TIDE_CRYSTAL = "It hums like a shell held to the ear.",
+            TIDE_CRYSTAL_CLUSTER = "The tide left this behind. It's still humming.",
         },
     },
     zh =
@@ -39,10 +41,12 @@ local TEXT =
         NAMES =
         {
             TIDE_CRYSTAL = "潮蚀结晶",
+            TIDE_CRYSTAL_CLUSTER = "潮蚀晶簇",
         },
         DESCRIBE =
         {
             TIDE_CRYSTAL = "贴近耳边，能听见很远很远的潮声。",
+            TIDE_CRYSTAL_CLUSTER = "潮水退去后留下的，还在嗡嗡作响。",
         },
     },
 }

@@ -45,17 +45,24 @@
 
 ## ④ 去背景
 
-- 纯色背景：直接交给第 ⑤ 步的 `--key-color auto`
+- 纯色背景（推荐让 AI 用品红 `#FF00FF`）：用脚本去掉，输出 `<原名>_nobg.png`，和原图放在一起提交
+
+  ```bat
+  python tools\art\remove_bg.py art\source\tide_crystal\tide_crystal_v2_chatgpt.png
+  ```
+
+  它不只是把背景色变透明，还会把轮廓边缘混进去的背景色"减掉"（否则缩小后会有一圈紫边）。
+  之后的图标、地面外观都用 `_nobg.png` 做输入
 - 复杂背景：用去背景工具（如 ComfyUI 的抠图节点、rembg），再在 Krita/Photoshop 里手修边缘
 - 判断标准：放到深色和浅色背景上都没有白边/彩边（第 ⑤ 步的预览会显示）
 
 ## ⑤ 规格化（脚本）
 
 ```bat
-python tools\art\prepare_icon.py art\source\tide_crystal\tide_crystal_v1_chatgpt.png --name tide_crystal
+python tools\art\prepare_icon.py art\source\tide_crystal\tide_crystal_v2_chatgpt_nobg.png --name tide_crystal
 ```
 
-（源图是纯色背景时加 `--key-color auto`；想加深色描边时加 `--outline 1`。）
+（想加深色描边时加 `--outline 1`。`--key-color auto` 也能直接去纯色背景，算法同 remove_bg.py，但单独去背景更方便检查。）
 
 输出：
 - `art\icons\tide_crystal.png`：64×64 透明 PNG（裁边、等比缩放、居中、预乘 alpha 缩放避免白边）
@@ -135,13 +142,16 @@ RegisterInventoryItemAtlas(GLOBAL.resolvefilepath("images/inventoryimages/tide_c
 最简单的地面外观就是"一张图 = 一个单帧动画"，我们用自己的脚本生成，不需要 Spriter 和 Mod Tools：
 
 ```bat
-python tools\art\make_anim.py item art\source\tide_crystal\tide_crystal_v1_chatgpt.png --name tide_crystal --height 150 --pivot 0.5,0.75 ^
+python tools\art\make_anim.py item art\source\tide_crystal\tide_crystal_v2_chatgpt_nobg.png --name tide_crystal --height 135 --pivot 0.5,0.7 ^
     --compare "<DST安装目录>\data\anim\gems.zip:bluegem_idle" --compare "<DST安装目录>\data\anim\flint.zip:idle"
+
+python tools\art\make_anim.py item art\source\tide_crystal\tide_crystal_v1_chatgpt.png --name tide_crystal_cluster --height 300 --pivot 0.5,0.85 ^
+    --compare "<DST安装目录>\data\anim\rock.zip:full"
 ```
 
 - 输出 `mod\anim\tide_crystal.zip`：bank = build = symbol = `tide_crystal`，一个单帧动画 `idle`
 - 输出 `art\review\tide_crystal_ground_preview.png`：和原版宝石、燧石**按同样比例**并排，红十字是实体原点，横线是地面
-- `--height`：游戏里的高度（build 像素）。原版参考：蓝宝石 152×126，燧石堆 223×119
+- `--height`：游戏里的高度（build 像素）。原版参考：蓝宝石 152×126，燧石堆 223×119，巨石 605×413
 - `--pivot`：实体原点落在图上的位置（比例）。掉落物 0.5,0.5（宝石）~ 0.5,0.71（燧石堆）；建筑一般在底边附近
 - 源图直接用 `art/source/` 里的原图（脚本自己裁边、缩放），同样的输入得到逐字节相同的 zip
 - 脚本会把生成的 zip 读回来渲染一遍，和输入图比较误差
@@ -164,7 +174,15 @@ inst.AnimState:PlayAnimation("idle")
 再用同一套坐标约定把原版宝石和燧石渲染出来，方向、拼接、图层顺序都正确。
 格式细节（y 轴向下为正、贴图上下翻转存储、1 build 单位 = 1 贴图像素）写在 `kanim.py` 顶部。
 
-潮蚀结晶的地面外观已按此生成（2026-10-11），**待进游戏验证**：地上的样子、和原版物品的大小对比、鼠标悬停、漂浮在水上。
+当前的两个地面外观（2026-10-11）：
+
+| prefab | 源图 | 尺寸 / 原点 | 状态 |
+|---|---|---|---|
+| `tide_crystal`（物品） | `tide_crystal_v2_chatgpt_nobg.png`（单块结晶） | 135 高，原点 0.5,0.7 | 待进游戏验证（第一版用 v1 晶簇图时已在游戏里显示正常） |
+| `tide_crystal_cluster`（可开采） | `tide_crystal_v1_chatgpt.png`（带石块的晶簇） | 300 高，原点 0.5,0.85 | 待进游戏验证 |
+
+**颜色**：游戏按季节/昼夜给世界画面套颜色滤镜（见 API_NOTES「画面颜色」），地上的东西和物品栏图标颜色不同是正常的。
+秋天白天青色会偏绿。如果以后想让某种颜色在各季节都更稳定，要在出图时考虑滤镜，不是改转换工具。
 
 ## 之后：多部件 / 多帧动画（祭坛等建筑）
 

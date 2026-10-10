@@ -76,6 +76,29 @@
 | zip 格式：`build.bin` + `anim.bin` + `atlas-N.tex`，deflate 压缩；atlas 与物品栏图标同一套 KTEX 约定（DXT5、预乘 alpha、上下翻转、完整 mipmap），尺寸可以不是正方形（flint 是 512×256） | 原版 gems / flint / moondial / moondial_build 实测 |
 | build.bin v6、anim.bin v4 的完整字段布局；动画坐标 y 向下为正（建筑 ty 为负）；1 build 单位 = 1 贴图像素；矩形上沿对应较大的 v；同一帧多个元素时排在前面的显示在上层 | `tools/art/kanim.py` 顶部注释；`make_anim.py selftest` 对四个原版包读入再写出**逐字节相同**；原版宝石/燧石按此渲染方向正确 |
 
+## 可开采物（潮蚀晶簇用）
+
+| 事实 | 出处 |
+|---|---|
+| 镐开采：`workable:SetWorkAction(ACTIONS.MINE)`、`SetWorkLeft(n)`（同时把 workable 设为 true）、`SetOnWorkCallback(fn(inst, worker, workleft))`；`workleft <= 0` 时自己生成特效、掉落、`inst:Remove()` | `prefabs/rocks.lua` `OnWork`；`prefabs/lunarrift_crystals.lua`；`components/workable.lua` |
+| `workable.savestate = true`：存档时保存 `workleft` / `maxwork`（默认不保存，读档后恢复满值） | `components/workable.lua` `OnSave` / `OnLoad`；`lunarrift_crystals.lua` |
+| `TUNING.ROCKS_MINE = 6`（原版巨石要挖 6 下） | `tuning.lua` |
+| `lootdropper:SetLoot({...})` **会清空**概率掉落和随机掉落 → 先 `SetLoot` 再 `AddChanceLoot(prefab, chance)`；`DropLoot(pt)` 在 pt 处掉落 | `components/lootdropper.lua` |
+| `MakeObstaclePhysics(inst, rad, height)`：不可穿过的障碍；原版巨石半径 1，裂隙水晶 0.6 / 1.0 | `standardcomponents.lua`；`rocks.lua`；`lunarrift_crystals.lua` |
+| 标签 `crystal`：被镐敲时用 `mining_crystal_fx` 和月岛玻璃的开采声；标签 `moonglass` 用 `mining_moonglass_fx` | `stategraphs/commonstates.lua` `PlayMiningFX` |
+| 标签 `boulder`：熊獾冲撞撞碎可开采物时，带 `boulder` / `tree` 标签的会先清空掉落（撞碎不给东西） | `prefabs/bearger.lua` `OnDestroyOther` |
+| 碎裂特效 prefab：`mining_moonglass_fx`（在 `fx.lua` 表里定义）、`collapse_small`、`rock_break_fx`（自带 `dontstarve/wilson/rock_break` 声音） | `fx.lua`；`prefabs/rock_break_fx.lua`；`lunarrift_crystals.lua` |
+| `Prefab(name, fn, assets, prefabs)` 第 4 个参数是会生成的 prefab 列表，用来提前加载它们的资源 | 原版 prefab 通用写法（如 `rocks.lua`） |
+| `inst:GetPosition()` 返回 `Vector3`；`Vector3:Get()` 返回 x, y, z | `entityscript.lua`；`vector3.lua` |
+
+## 画面颜色
+
+| 事实 | 出处 |
+|---|---|
+| 游戏按季节和昼夜给**世界画面**套颜色滤镜（colour cube），物品栏等界面不受影响。秋天：白天 `day05_cc`、黄昏 `dusk03_cc`、夜晚 `night03_cc` | `components/colourcube.lua` |
+| 滤镜文件 `images/colour_cubes/*.tex`：1024×32 未压缩 RGB 的 32³ 查找表（横向 32 片，每片 32×32；x = 蓝×32 + 红，绿按行、存储上下翻转） | 解码 `identity_colourcube.tex` 实测：按此布局查表与原色最大误差 1 |
+| 秋天白天的滤镜会让青色偏绿、蓝色接近灰色（原版蓝宝石也一样）→ 地上物品和图标颜色不同是正常的 | 用 `day05_cc` 处理原版蓝宝石与潮蚀结晶，和 2026-10-11 游戏截图一致 |
+
 ## 配方
 
 | 事实 | 出处 |
@@ -115,5 +138,6 @@
 
 - Don't Starve Mod Tools / ktech（目前作为备用方案，未在本机使用）
 - anim.bin 里带**事件**（每帧 events 非空）的情况：格式按 ktools 的布局实现，但手头四个原版包都没有事件，未经往返验证
-- `make_anim.py` 生成的动画包：结构已通过往返和渲染校验，**游戏内显示待验证**（潮蚀结晶，2026-10-11）
+- `make_anim.py` 生成的动画包：潮蚀结晶第一版在游戏地面上显示正常（2026-10-11 用户截图）；漂浮在海面上未单独确认
+- 潮蚀晶簇的开采流程（OnWork 回调里的代码不会被 `check_mod.py` 执行，只能进游戏验证）
 - Workshop 上传流程与大小限制（第 4 阶段再查）

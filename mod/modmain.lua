@@ -18,6 +18,7 @@ Log.SetDebug(GetModConfigData("debug_log") == true)
 PrefabFiles =
 {
     "tide_crystal",
+    "tide_crystal_cluster",
 }
 
 -- Mod 自己的贴图/动画资源在这里声明（prefab 专用的资源写在各自 prefab 文件里）。
