@@ -127,12 +127,13 @@ RegisterInventoryItemAtlas(GLOBAL.resolvefilepath("images/inventoryimages/tide_c
 | game_file | `mod/images/inventoryimages/tide_crystal.tex` |
 | source_file | `art/source/tide_crystal/tide_crystal_v1.png` |
 | tool / model_or_version | 生成工具名 / 模型名和版本 |
-| prompt_file / seed | `art/prompts/tide_crystal_icon.md` / 种子 |
+| prompt_file / seed | 可选：有现成的就记，没有就写"未记录" |
 | human_edits | "Krita 修边缘、加高光" |
 | license_notes | 该工具服务条款对生成内容的商用/归属规定（链接 + 查阅日期） |
 | status | `in_game` |
 
-每个使用的 AI 工具，第一次用之前都要查一次它的服务条款（是否允许商用、生成内容归属、是否要求署名），记在 `license_notes`。
+必须记的只有：用的是哪个工具、源图在哪、做了哪些处理。prompt 不强制记录（2026-10-11 决定）。
+发布到创意工坊之前，查一次所用 AI 工具的服务条款（是否允许商用、生成内容归属、是否要求署名），记在 `license_notes`。
 
 ---
 
