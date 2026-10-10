@@ -204,7 +204,7 @@ inst.AnimState:PlayAnimation("idle")
 | `tide_crystal`（物品） | `tide_crystal_v2_chatgpt_nobg.png`（单块结晶） | 135 高，原点 0.5,0.7 | 待进游戏验证（第一版用 v1 晶簇图时已在游戏里显示正常） |
 | `tide_crystal_cluster`（可开采） | `tide_crystal_v1_chatgpt.png` + ChatGPT 破损图 med / low（已对齐） | 300 高，原点 0.5,0.85，三个动画 full/med/low | 游戏里显示正常（2026-10-11） |
 | `tide_altar`（建筑） | `art/source/tide_altar/` 平时图 + 唤潮图（黑背景，`cutout_glow.py` 抠出） | 440 高（约 1.3 个人物高，比月晷 292、巨石 413 高），原点 0.58,0.93，动画 idle / active | 游戏里显示正常（2026-10-11）；去掉悬空水珠后待再看 |
-| `tide_altar_swirl`（祭坛脚下的漩涡） | `tide_altar_warning_chatgpt.png` | 地面上 320 × 166 的椭圆；32 帧流动循环（1.07 秒）+ 整体 6.4 秒一圈 | 待进游戏验证 |
+| `tide_altar_swirl`（祭坛脚下的漩涡） | `tide_altar_swirl_v1..v6_chatgpt.png`（同一个漩涡的 6 个手绘变体） | 地面上 320 × 166 的椭圆；30 帧流动循环（1 秒），外圈 6 个变体每 5 帧换一次；整体 6 秒一圈 | 待进游戏验证（上一版单图流动已在游戏里显示正常） |
 
 ### 祭坛的做法（黑背景的发光图）
 
@@ -220,12 +220,18 @@ python tools\art\png2tex.py art\icons\tide_altar.png
 
 `cutout_glow.py`：物体本身用平时图的轮廓（墨线完整），物体外面的光晕和水珠按亮度反推透明度。
 `--max-dist 12`：物体外只保留 12 像素以内的光——静止的图里悬空的水珠一动不动，看着很假（2026-10-11 游戏内反馈），所以去掉。
+原点 x = 0.58 而不是 0.5：海螺往左上方伸出去，底座在图的偏右位置。
 
-脚下旋转的漩涡（用的是潮痕预警那张图）：
+脚下旋转的漩涡（6 张同一个漩涡、外圈白沫各不相同的变体）：
 
 ```bat
-python tools\art\make_anim.py spin art\source\tide_altar\tide_altar_warning_chatgpt.png --name tide_altar_swirl --width 320 --period 192 --flow 32
+python tools\art\make_anim.py spin art\source\tide_altar\tide_altar_swirl_v1_chatgpt.png ^
+    art\source\tide_altar\tide_altar_swirl_v2_chatgpt.png art\source\tide_altar\tide_altar_swirl_v3_chatgpt.png ^
+    art\source\tide_altar\tide_altar_swirl_v4_chatgpt.png art\source\tide_altar\tide_altar_swirl_v5_chatgpt.png ^
+    art\source\tide_altar\tide_altar_swirl_v6_chatgpt.png --name tide_altar_swirl --width 320 --period 180 --flow 30
 ```
+
+（上一版只用一张图：`spin art\source\tide_altar\tide_altar_warning_chatgpt.png ... --period 192 --flow 32`，同样的命令还能用。）
 
 `spin` 的原理同原版预警圈：把 AI 画的椭圆拉回正圆做贴图，动画每帧用矩阵"压扁 × 旋转 × 缩放"，看起来就平躺在地上转。
 输出 pre（长出来）/ loop（`--period` 帧转一圈）/ pst（缩回去）三个动画，以及 `art\review\<名字>_spin.gif` 预览。
@@ -236,8 +242,16 @@ python tools\art\make_anim.py spin art\source\tide_altar\tide_altar_warning_chat
 越靠近中心转得越多、往中心吸，外圈白沫不动，两层相位错开交替淡入淡出，1.07 秒无缝循环；再叠加整体 6.4 秒一圈的慢转。
 贴图 32 帧 × 252px，打包成 1024×2048（打包时边长不超过 2048，和原版见过的最大贴图一致）。
 可调：`--flow-swirl`（中心多转多少）、`--flow-drain`（往里吸多少）、`--flow-size`（每帧分辨率）。
-以后有真正的手绘逐帧图时，也可以扩展成直接读一组 PNG 帧。
-原点 x = 0.58 而不是 0.5：海螺往左上方伸出去，底座在图的偏右位置。
+
+**多张变体**（2026-10-11 反馈：程序生成的帧"边缘全都完全一样"，中心效果不错）：给 `spin` 多张图时——
+
+* 中心照旧由程序做流动；外圈 15% 不变形，改成**每张变体轮流显示 `flow / 张数` 帧**（上面的命令：6 张 × 5 帧 = 30 帧，每秒换 6 次），
+  白沫轮廓像手绘动画的"抖线"一样一直在变
+* 变体之间**直接切换，不交叉淡化**：试过淡化，两圈不同的白沫叠在一起变成半透明的重影
+* 对齐：每张变体绕圆心转到中心螺旋和第一张最像的角度（只比内圈 60%，2° 一档，不镜像——镜像会把螺旋方向和光照一起反过来），
+  减少换图时中心跳动；播放顺序穷举出外圈轮廓差别最小、首尾相接的一圈。两项结果都会打印出来
+* `--flow` 必须是张数的整数倍，`--period` 必须是 `--flow` 的整数倍（否则循环接不上），不满足时直接报错
+* AI 画的变体最好构图一致（同样大小、同一个旋转方向、背景透明），只是外圈白沫不同
 
 **颜色**：游戏按季节/昼夜给世界画面套颜色滤镜（见 API_NOTES「画面颜色」），地上的东西和物品栏图标颜色不同是正常的。
 秋天白天青色会偏绿。如果以后想让某种颜色在各季节都更稳定，要在出图时考虑滤镜，不是改转换工具。

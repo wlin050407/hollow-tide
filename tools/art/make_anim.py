@@ -8,7 +8,8 @@
   item      PNG -> mod/anim/<name>.zip（bank = build = symbol = <name>，动画 "idle"），并输出审查预览图
   stages    几张对齐的图 -> 同一个包里的几个动画，例如可开采物的 full / med / low 破损阶段
   spin      地面椭圆图案 -> 平躺在地上旋转的动画（pre / loop / pst），做法同原版预警圈；
-            加 --flow N 时先生成 N 张逐帧流动的图（中心转得快、往里吸），像原版海上漩涡那样逐帧播放
+            加 --flow N 时先生成 N 张逐帧流动的图（中心转得快、往里吸），像原版海上漩涡那样逐帧播放；
+            给多张同一图案的变体时，外圈轮流换图（手绘动画式的"抖动"）
   preview   把任意动画包（自己的或原版的）的某个动画第 0 帧画出来，可以多个并排对比大小
   selftest  读入原版动画包再写出，确认与原文件逐字节相同（证明 kanim.py 的格式理解是对的）
 
@@ -449,24 +450,72 @@ def drop_islands(img: Image.Image, alpha_floor: int) -> Image.Image:
     return out
 
 
-def flow_frames(circle: Image.Image, count: int, swirl: float, drain: float) -> list[Image.Image]:
-    """把一张正圆的漩涡图"画"成 count 帧会流动的循环动画（逐帧不同的图，不只是整体转）。
-
-    做法（游戏里做水面常用的 flow map 交叉淡化）：
-      * 越靠近中心转得越多（差速旋转），并稍微往中心"吸"一点；外圈 15% 不动，边缘的白沫保持清晰
-      * 两份相位差半个周期的变形叠在一起交替淡入淡出，所以能无缝循环、不会跳
-    count 帧正好是一个周期；第 count 帧和第 0 帧一样。
-    """
-    n = circle.width
-    img = np.asarray(circle.convert("RGBa")).astype(np.float32)  # 预乘 alpha，插值不出黑边
+def _polar(n: int):
     yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
     c = (n - 1) / 2
     dx, dy = xx - c, yy - c
-    r = np.sqrt(dx * dx + dy * dy) / (n / 2)
-    ang = np.arctan2(dy, dx)
+    return c, np.sqrt(dx * dx + dy * dy) / (n / 2), np.arctan2(dy, dx)
+
+
+def align_variants(circles: list[Image.Image]) -> tuple[list[Image.Image], list[float]]:
+    """把每张变体绕圆心转到和第一张的中心螺旋最像的角度（只比较内圈 60%），减少换图时中心的跳动。
+    不做镜像：镜像会把螺旋方向和光照方向一起反过来。"""
+    n = circles[0].width
+    _, r, _ = _polar(n)
+    inner = r < 0.6
+
+    def lum(im):
+        a = np.asarray(im.convert("RGBA")).astype(np.float32)
+        v = (a[..., :3] @ np.array([0.299, 0.587, 0.114], dtype=np.float32))[inner]
+        return (v - v.mean()) / max(float(v.std()), 1e-6)
+
+    ref = lum(circles[0])
+    out, angles = [circles[0]], [0.0]
+    for im in circles[1:]:
+        best = (-9.0, 0.0)
+        for deg in np.arange(0.0, 360.0, 2.0):
+            score = float((lum(im.rotate(float(deg), resample=Image.BILINEAR)) * ref).mean())
+            if score > best[0]:
+                best = (score, float(deg))
+        angles.append(best[1])
+        out.append(im.rotate(best[1], resample=Image.BICUBIC))
+    return out, angles
+
+
+def order_variants(circles: list[Image.Image]) -> list[int]:
+    """排一个首尾相接的播放顺序，让相邻两张的外圈轮廓尽量接近（换图时跳得小）。变体不多，直接穷举。"""
+    import itertools
+    n = circles[0].width
+    _, r, _ = _polar(n)
+    rim = r > 0.6
+    masks = [(np.asarray(im.convert("RGBA"))[..., 3] > 128)[rim] for im in circles]
+    k = len(circles)
+    diff = [[float((masks[i] != masks[j]).mean()) for j in range(k)] for i in range(k)]
+    best = None
+    for perm in itertools.permutations(range(1, k)):
+        order = (0,) + perm
+        cost = sum(diff[order[i]][order[(i + 1) % k]] for i in range(k))
+        if best is None or cost < best[0]:
+            best = (cost, list(order))
+    return best[1]
+
+
+def flow_frames(circles: list[Image.Image], count: int, swirl: float, drain: float) -> list[Image.Image]:
+    """把正圆的漩涡图"画"成 count 帧会流动的循环动画（逐帧不同的图，不只是整体转）。
+
+    * 中心的水：差速旋转（越靠近中心转得越多）并往中心"吸"；两份相位差半个周期的变形交替淡入淡出，无缝循环
+      （游戏里做水面常用的 flow map 交叉淡化）
+    * 外圈 15% 不参与变形。只有一张图时外圈永远不动；有多张变体时，每张轮流显示 count/张数 帧，
+      外圈的白沫就像手绘动画的"抖线"一样在变（直接切换，不交叉淡化——淡化会让两圈白沫叠成半透明的重影）
+    count 帧正好是一个周期；第 count 帧和第 0 帧一样。
+    """
+    n = circles[0].width
+    imgs = [np.asarray(c.convert("RGBa")).astype(np.float32) for c in circles]  # 预乘 alpha，插值不出黑边
+    hold = count // len(imgs)
+    c, r, ang = _polar(n)
     k = np.clip(1 - r / 0.85, 0, 1) ** 2
 
-    def sample(sx, sy):
+    def sample(img, sx, sy):
         sx = np.clip(sx, 0, n - 1.001)
         sy = np.clip(sy, 0, n - 1.001)
         x0 = np.floor(sx).astype(int)
@@ -477,41 +526,57 @@ def flow_frames(circle: Image.Image, count: int, swirl: float, drain: float) -> 
         bot = img[y0 + 1, x0] * (1 - fx) + img[y0 + 1, x0 + 1] * fx
         return top * (1 - fy) + bot * fy
 
-    def warp(phase):
+    def warp(img, phase):
         theta = ang + swirl * k * phase
         rr = (r + drain * k * phase) * (n / 2)
-        return sample(c + rr * np.cos(theta), c + rr * np.sin(theta))
+        return sample(img, c + rr * np.cos(theta), c + rr * np.sin(theta))
 
     out = []
     for i in range(count):
+        img = imgs[(i // hold) % len(imgs)]
         p1 = i / count
         p2 = (p1 + 0.5) % 1.0
         w = abs(2 * p1 - 1)  # p1 刚回卷时它的权重是 0，所以看不到跳变
-        f = warp(p1) * (1 - w) + warp(p2) * w
+        f = warp(img, p1) * (1 - w) + warp(img, p2) * w
         a = f[..., 3:4]
         rgb = np.where(a > 0.5, f[..., :3] * 255.0 / np.maximum(a, 1e-3), 0)
         out.append(Image.fromarray(np.dstack([rgb, a]).clip(0, 255).round().astype(np.uint8), "RGBA"))
     return out
 
 
-def make_spin_package(src: Image.Image, name: str, width: int, period: int, pre: int, pst: int,
-                      clockwise: bool, alpha_floor: int, squash: float, level: int,
-                      keep_islands: bool = False, flow: int = 0, flow_size: int = 248,
-                      flow_swirl: float = 2.2, flow_drain: float = 0.12) -> tuple[dict[str, bytes], dict]:
-    """flow = 0：一张图整体旋转（同原版预警圈）。
-    flow = N：先用 flow_frames 生成 N 张逐帧不同的流动图（同原版海上漩涡那样逐帧播放），再叠加整体慢慢旋转。"""
-    import math
+def load_circle(src: Image.Image, size: int, alpha_floor: int, keep_islands: bool) -> Image.Image:
+    """AI 画的椭圆 -> 正圆贴图：去掉不相连的碎片、按不透明区域裁切、拉成 size x size。"""
     img = src.convert("RGBA")
     if not keep_islands:
         img = drop_islands(img, alpha_floor)
     x0, y0, x1, y1 = alpha_bbox(img, alpha_floor)
-    img = img.crop((x0, y0, x1, y1))
     # 拉成正圆（不按原图比例）：贴图不圆的话，转起来轮廓会一胀一缩
-    tex_size = flow_size if flow else width
-    circle = img.convert("RGBa").resize((tex_size, tex_size), Image.LANCZOS).convert("RGBA")
-    pictures = flow_frames(circle, flow, flow_swirl, flow_drain) if flow else [circle]
+    return img.crop((x0, y0, x1, y1)).convert("RGBa").resize((size, size), Image.LANCZOS).convert("RGBA")
+
+
+def make_spin_package(srcs: list[Image.Image], name: str, width: int, period: int, pre: int, pst: int,
+                      clockwise: bool, alpha_floor: int, squash: float, level: int,
+                      keep_islands: bool = False, flow: int = 0, flow_size: int = 248,
+                      flow_swirl: float = 2.2, flow_drain: float = 0.12) -> tuple[dict[str, bytes], dict]:
+    """flow = 0：一张图整体旋转（同原版预警圈）。
+    flow = N：先用 flow_frames 生成 N 张逐帧不同的流动图（同原版海上漩涡那样逐帧播放），再叠加整体慢慢旋转。
+    srcs 有多张时（同一个漩涡的几个手绘变体），外圈轮流换图，N 必须是张数的整数倍。"""
+    import math
+    if len(srcs) > 1 and not flow:
+        raise ValueError("多张变体需要配合 --flow 使用")
+    if flow and flow % len(srcs):
+        raise ValueError(f"--flow（{flow}）必须是变体张数（{len(srcs)}）的整数倍，每张显示一样多帧")
     if flow and period % flow:
         raise ValueError(f"--period（{period}）必须是 --flow（{flow}）的整数倍，否则循环接不上")
+    tex_size = flow_size if flow else width
+    circles = [load_circle(sv, tex_size, alpha_floor, keep_islands) for sv in srcs]
+    info: dict = {}
+    if len(circles) > 1:
+        circles, angles = align_variants(circles)
+        order = order_variants(circles)
+        circles = [circles[i] for i in order]
+        info = {"order": order, "angles": angles}
+    pictures = flow_frames(circles, flow, flow_swirl, flow_drain) if flow else circles
 
     sprites = []
     for pic in pictures:
@@ -557,12 +622,13 @@ def make_spin_package(src: Image.Image, name: str, width: int, period: int, pre:
     ]
     anim = kanim.AnimFile(anims=anims, names={sym: name})
     members = {"build.bin": kanim.write_build(build), "anim.bin": kanim.write_anim(anim), "atlas-0.tex": tex}
-    return members, {"texture": (w, h), "atlas": (aw, ah), "pictures": npic}
+    return members, {"texture": (w, h), "atlas": (aw, ah), "pictures": npic, "variants": len(srcs), **info}
 
 
 def cmd_spin(args) -> int:
     try:
-        members, meta = make_spin_package(Image.open(args.input), args.name, args.width, args.period, args.pre,
+        members, meta = make_spin_package([Image.open(pth) for pth in args.inputs], args.name, args.width,
+                                          args.period, args.pre,
                                           args.pst, args.clockwise, args.alpha_floor, args.squash, args.level,
                                           keep_islands=args.keep_islands, flow=args.flow, flow_size=args.flow_size,
                                           flow_swirl=args.flow_swirl, flow_drain=args.flow_drain)
@@ -577,6 +643,11 @@ def cmd_spin(args) -> int:
           f"{args.period / 30:.1f} 秒转一圈）/ pst（{args.pst} 帧，缩回去）")
     if meta["pictures"] > 1:
         print(f"  流动：{meta['pictures']} 张逐帧不同的图循环（{meta['pictures'] / 30:.2f} 秒一个周期），叠加整体旋转")
+    if meta["variants"] > 1:
+        hold = meta["pictures"] // meta["variants"]
+        names = [args.inputs[i].name for i in meta["order"]]
+        print(f"  外圈：{meta['variants']} 张变体轮流显示，每张 {hold} 帧（每秒换 {30 / hold:.0f} 次）；播放顺序 {names}")
+        print(f"  各变体为对齐中心螺旋转过的角度（度）：{[round(a, 1) for a in meta['angles']]}")
     print(f"  正圆贴图 {meta['texture'][0]}x{meta['texture'][1]}，atlas {meta['atlas'][0]}x{meta['atlas'][1]}；"
           f"地面上看是 {args.width} x {round(args.width * args.squash)} 的椭圆，圆心在实体原点")
 
@@ -656,7 +727,8 @@ def main() -> int:
     p.set_defaults(func=cmd_stages)
 
     p = sub.add_parser("spin", help="AI 画的地面椭圆图案 -> 平躺在地上旋转的动画（pre / loop / pst）")
-    p.add_argument("input", type=Path)
+    p.add_argument("inputs", type=Path, nargs="+",
+                   help="一张图；或同一个图案的几张变体（外圈轮流换，像手绘动画，需要配合 --flow）")
     p.add_argument("--name", required=True, help="bank / build / symbol 名")
     p.add_argument("--width", type=int, default=320, help="地面上椭圆的宽度（build 像素）")
     p.add_argument("--period", type=int, default=90, help="转一圈的帧数（30 帧 = 1 秒）")
